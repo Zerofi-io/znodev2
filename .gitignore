@@ -1,0 +1,16 @@
+node_modules/
+.logs/
+logs/
+pids/
+.env*
+*.pid
+*.log
+multi/
+.backup/
+*.bak*
+*.before-*
+*.backup*
+*.broken*
+monero-wallet-*.log
+monero-rpc.log
+node.log
