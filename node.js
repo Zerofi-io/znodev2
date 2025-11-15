@@ -614,7 +614,7 @@ class ZNode {
       const staleRound = completed && canRegister;
       // If registered but not in forming, we may be a ghost: requeue provided there is capacity
       const queueRoom = (Number(queueLen) + selectedNodes.length) < 11;
-      const needsQueue = (!registered) || (registered && !inForming && queueRoom);
+      const needsQueue = canRegister && ( (!registered) || (registered && !inForming && queueRoom) );
       if (staleRound || needsQueue) {
         const now = Date.now();
         this._lastRequeueTs = this._lastRequeueTs || 0;
@@ -713,17 +713,20 @@ class ZNode {
         const [selectedNodes, lastSelection] = await this.registry.getFormingCluster();
       const completed = selectedNodes.length === 11;
         
-        // Ghost detection: if registered but not in forming cluster and cluster is not full,
-        // re-register even when queueLen > 0 (handles ghost registrations stuck off-queue)
+        // Ghost detection (conservative): only re-register when queue is empty and registration window is open
         const nodeInfo = await this.registry.registeredNodes(this.wallet.address);
         if (nodeInfo.registrationTime > 0) {
           const inFormingCluster = selectedNodes.map(a => a.toLowerCase()).includes(this.wallet.address.toLowerCase());
-          if (!inFormingCluster && selectedNodes.length < 11) {
-            console.log("⚠️  Ghost detected: registered but not in queue/forming; re-registering");
+          const now = Date.now();
+          this._lastGhostFixTs = this._lastGhostFixTs || 0;
+          const backoffOk = (now - this._lastGhostFixTs) > 120 * 1000; // 2 min backoff
+          if (backoffOk && !inFormingCluster && selectedNodes.length < 11 && Number(queueLen) === 0 && canRegister) {
+            console.log("⚠️  Ghost detected: registered but not in queue/forming (queue=0, canRegister). Re-registering...");
             const deregTx = await this.registry.deregisterNode();
             await deregTx.wait();
             await new Promise(r => setTimeout(r, 2000));
             await this.registerToQueue();
+            this._lastGhostFixTs = now;
             return;
           }
         }
