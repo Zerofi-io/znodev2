@@ -769,6 +769,15 @@ class ZNode {
                 if (!STICKY) { await this.requeueIfStale({ queueLen, selectedNodes, lastSelection, completed, canRegister }); }
         // Auto-cleanup stale clusters
         await this.cleanupStaleCluster();
+        // Force-clear stuck state: if canRegister=false but no forming cluster, try clear once/min
+        if (process.env.FORCE_SELECT === '1' && !canRegister && selectedCount === 0) {
+          this._lastForceClear = this._lastForceClear || 0;
+          const now = Date.now();
+          if (now - this._lastForceClear > 60000) {
+            try { const tx = await this.registry.clearStaleCluster(); await tx.wait(); console.log('FORCE_CLEAR: clearStaleCluster() called'); } catch (e) { /* ignore */ }
+            this._lastForceClear = now;
+          }
+        }
 
                 // Attempt to trigger selection if conditions met and data not stale
                 const canSelectNow = (selectedCount < 11) && ( FORCE_SELECT || ( (Number(queueLen) + selectedCount) >= 11 || (!canRegister && Number(queueLen) > 0) ) );
