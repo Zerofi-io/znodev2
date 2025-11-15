@@ -560,6 +560,7 @@ class ZNode {
     const nodeInfo = await this.registry.registeredNodes(this.wallet.address);
     
     if (nodeInfo.registrationTime > 0) {
+      if (process.env.STICKY_QUEUE === '1') { console.log('✓ Already registered\n'); return; }
       // Check if we're in ghost state (registered but not in queue/forming cluster)
       const [queueLen, selectedCount] = await this.registry.getQueueStatus();
       const [formingCluster] = await this.registry.getFormingCluster();
@@ -712,19 +713,22 @@ class ZNode {
     console.log('Wallet has password and multisig is enabled.\n');
     
     const printStatus = async () => {
+      const STICKY = (process.env.STICKY_QUEUE === '1');
+      const FORCE_SELECT = (process.env.FORCE_SELECT === '1');
       try {
         const [queueLen, , canRegister] = await this.registry.getQueueStatus();
         const [selectedNodes, lastSelection] = await this.registry.getFormingCluster();
       const completed = selectedNodes.length === 11;
         
         // Ghost detection (conservative): only re-register when queue is empty and registration window is open
+        // Disabled if STICKY to avoid churn during testing
         const nodeInfo = await this.registry.registeredNodes(this.wallet.address);
         if (nodeInfo.registrationTime > 0) {
           const inFormingCluster = selectedNodes.map(a => a.toLowerCase()).includes(this.wallet.address.toLowerCase());
           const now = Date.now();
           this._lastGhostFixTs = this._lastGhostFixTs || 0;
           const backoffOk = (now - this._lastGhostFixTs) > 120 * 1000; // 2 min backoff
-          if (backoffOk && !inFormingCluster && selectedNodes.length < 11 && Number(queueLen) === 0 && canRegister) {
+          if (!STICKY && backoffOk && !inFormingCluster && selectedNodes.length < 11 && Number(queueLen) === 0 && canRegister) {
             console.log("⚠️  Ghost detected: registered but not in queue/forming (queue=0, canRegister). Re-registering...");
             const deregTx = await this.registry.deregisterNode();
             await deregTx.wait();
@@ -745,12 +749,12 @@ class ZNode {
         
         const shownSelected = stale ? 0 : selectedCount;
         console.log(`Queue: ${queueLen} | Selected: ${shownSelected}/11 | Clusters: ${clusterCount} | CanRegister: ${canRegister} | Completed: ${completed}`);
-                await this.requeueIfStale({ queueLen, selectedNodes, lastSelection, completed, canRegister });
+                if (!STICKY) { await this.requeueIfStale({ queueLen, selectedNodes, lastSelection, completed, canRegister }); }
         // Auto-cleanup stale clusters
         await this.cleanupStaleCluster();
 
                 // Attempt to trigger selection if conditions met and data not stale
-                const canSelectNow = (selectedCount < 11) && ( (Number(queueLen) + selectedCount) >= 11 || (!canRegister && Number(queueLen) > 0) );
+                const canSelectNow = (selectedCount < 11) && ( FORCE_SELECT || ( (Number(queueLen) + selectedCount) >= 11 || (!canRegister && Number(queueLen) > 0) ) );
                 if (canSelectNow) console.log('DEBUG: Attempting selection (queue=%d, selected=%d)', queueLen, selectedCount);
                 if (canSelectNow) {
                   try {
