@@ -750,7 +750,7 @@ class ZNode {
         await this.cleanupStaleCluster();
 
                 // Attempt to trigger selection if conditions met and data not stale
-                const canSelectNow = (selectedCount < 11) && ((Number(queueLen) + selectedCount) >= 11);
+                const canSelectNow = (selectedCount < 11) && ( (Number(queueLen) + selectedCount) >= 11 || (!canRegister && Number(queueLen) > 0) );
                 if (canSelectNow) console.log('DEBUG: Attempting selection (queue=%d, selected=%d)', queueLen, selectedCount);
                 if (canSelectNow) {
                   try {
