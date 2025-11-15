@@ -5,6 +5,23 @@ const crypto = require('crypto');
 
 class ZNode {
   constructor() {
+  async _readQueueStatus() {
+    try {
+      const res = await this.registry.getQueueStatus();
+      if (Array.isArray(res)) {
+        if (res.length >= 3) {
+          return { queueLen: res[0], selectedCountHint: res[1], canRegister: !!res[2] };
+        } else if (res.length === 2) {
+          return { queueLen: res[0], selectedCountHint: 0n, canRegister: !!res[1] };
+        }
+      }
+      // Fallback: treat as {queueLen, canRegister} if tuple shape unexpected
+      const q = res && res.queueLen !== undefined ? res.queueLen : 0n;
+      const cr = res && res.canRegister !== undefined ? !!res.canRegister : false;
+      return { queueLen: q, selectedCountHint: 0n, canRegister: cr };
+    } catch (e) { return { queueLen: 0n, selectedCountHint: 0n, canRegister: true }; }
+  }
+
     this.provider = new ethers.JsonRpcProvider(
       process.env.RPC_URL || 'https://eth-sepolia.g.alchemy.com/v2/vO5dWTSB5yRyoMsJTnS6V'
     );
@@ -608,7 +625,7 @@ class ZNode {
   async requeueIfStale(ctx) {
     try {
       // Always refresh state from chain to avoid stale context
-      const [queueLen, , canRegister] = await this.registry.getQueueStatus();
+      const { queueLen, canRegister } = await this._readQueueStatus();
       const [selectedNodes, lastSelection] = await this.registry.getFormingCluster();
       const completed = selectedNodes.length === 11;
       const info = await this.registry.registeredNodes(this.wallet.address);
@@ -716,7 +733,7 @@ class ZNode {
       const STICKY = (process.env.STICKY_QUEUE === '1');
       const FORCE_SELECT = (process.env.FORCE_SELECT === '1');
       try {
-        const [queueLen, , canRegister] = await this.registry.getQueueStatus();
+        const { queueLen, canRegister } = await this._readQueueStatus();
         const [selectedNodes, lastSelection] = await this.registry.getFormingCluster();
       const completed = selectedNodes.length === 11;
         
