@@ -827,6 +827,23 @@ class ZNode {
     // Print immediately and then on interval
     await printStatus();
     setInterval(printStatus, 15000);
+    // Background selection driver when FORCE_SELECT enabled
+    if (process.env.FORCE_SELECT === '1') {
+      (async () => {
+        while (true) {
+          try {
+            const [q, , canReg] = await this.registry.getQueueStatus();
+            const [sel] = await this.registry.getFormingCluster();
+            const selCount = sel.filter(a => a && a !== ethers.ZeroAddress && a !== '0x0000000000000000000000000000000000000000').length;
+            if (selCount < 11 && (Number(q) + selCount) > 0) {
+              try { const tx = await this.registry.selectNextNode(); await tx.wait(); console.log('FORCE_SELECT: triggered selection'); } catch (e) { /* ignore */ }
+            }
+          } catch (e) { /* ignore */ }
+          await new Promise(r => setTimeout(r, 3000));
+        }
+      })();
+    }
+
   }
 
 
