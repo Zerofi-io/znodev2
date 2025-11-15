@@ -53,26 +53,30 @@ class ZNode {
       'function getExchangeRoundStatus(bytes32 clusterId, uint8 round) external view returns (bool complete, uint8 submitted)'
     ];
 
+    const REGISTRY_ADDR = process.env.REGISTRY_ADDR || '0xE4BE4099D9Ad998E94a09F72cB69A3f0D836b9F0';
     this.registry = new ethers.Contract(
-      '0xad2F94104F38210625F2022883482De774c51d84',
+      REGISTRY_ADDR,
       registryABI,
       this.wallet
     );
 
+    const STAKING_ADDR = process.env.STAKING_ADDR || '0xC0b007385c0c95db5a38Cf6877D4f003dc33EC82';
     this.staking = new ethers.Contract(
-      '0x287Ae2697B58e2f63B27426A97287df769b121e9',
+      STAKING_ADDR,
       stakingABI,
       this.wallet
     );
 
+    const ZFI_ADDR = process.env.ZFI_ADDR || '0x0cbFD08757009Ef7C85fF1CE72a95dE9D30Ff877';
     this.zfi = new ethers.Contract(
-      '0x43fAC64A8B016aE4CC26E36e4ebe2b8B6A51109a',
+      ZFI_ADDR,
       zfiABI,
       this.wallet
     );
 
+    const COORDINATOR_ADDR = process.env.COORDINATOR_ADDR || '0xe468C27c089d48E1030eA43D6a44408E9a0A28f6';
     this.exchangeCoordinator = new ethers.Contract(
-      '0xdA258736a8F3ED30CE2Ba150Ba65076cE9919C7E',
+      COORDINATOR_ADDR,
       exchangeCoordinatorABI,
       this.wallet
     );
