@@ -736,7 +736,7 @@ class ZNode {
         }
 
         const clusterCount = 0; // getActiveClusterCount removed from new contract
-        const selectedCount = selectedNodes.length;
+        const selectedCount = selectedNodes.filter(a => a && a !== ethers.ZeroAddress && a !== '0x0000000000000000000000000000000000000000').length;
         const isSelected = selectedNodes.map(a => a.toLowerCase()).includes(this.wallet.address.toLowerCase());
         const lastSelMs = Number(lastSelection) * 1000;
         const ageMs = Date.now() - lastSelMs;
