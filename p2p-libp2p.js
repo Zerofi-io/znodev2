@@ -13,6 +13,7 @@ import { ping } from '@libp2p/ping';
 import { bootstrap } from '@libp2p/bootstrap';
 import { mdns } from '@libp2p/mdns';
 import { identify } from '@libp2p/identify';
+import { multiaddr } from '@multiformats/multiaddr';
 import { ethers } from 'ethers';
 import { createEd25519PeerId } from '@libp2p/peer-id-factory';
 import crypto from 'crypto';
@@ -145,16 +146,20 @@ class LibP2PExchange {
     await this.node.start();
 
     // Proactively dial configured bootstrap peers to ensure connectivity
-    if (bootstrapPeers.length > 0) {
-      for (const addr of bootstrapPeers) {
-        try {
-          await this.node.dial(addr);
-          console.log(`[P2P] Dialed bootstrap peer ${addr}`);
-        } catch (e) {
-          console.log('[P2P] Failed to dial bootstrap peer', addr, '-', e.message || String(e));
-        }
-      }
-    }
+    // NOTE: This manual dial block is disabled; libp2p's bootstrap({ list })
+    // already handles connecting to configured peers. Leaving it commented
+    // out avoids double-dial and version-specific multiaddr issues.
+    // if (bootstrapPeers.length > 0) {
+    //   for (const addr of bootstrapPeers) {
+    //     try {
+    //       const ma = multiaddr(addr);
+    //       await this.node.dial(ma);
+    //       console.log(`[P2P] Dialed bootstrap peer ${addr}`);
+    //     } catch (e) {
+    //       console.log('[P2P] Failed to dial bootstrap peer', addr, '-', e.message || String(e));
+    //     }
+    //   }
+    // }
 
     // Track connected peers to build a local bootstrap cache
     this.node.addEventListener('peer:connect', (evt) => {
