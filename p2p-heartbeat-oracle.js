@@ -78,6 +78,8 @@ const STAGE_THRESHOLDS = {
   3: 96n
 };
 
+const ENABLE_HEARTBEAT_ORACLE = process.env.ENABLE_HEARTBEAT_ORACLE === '1';
+
 async function createContext() {
   const provider = new ethers.JsonRpcProvider(EFFECTIVE_RPC_URL);
   const network = await provider.getNetwork();
@@ -346,6 +348,11 @@ async function oracleTick(staking, p2p) {
 }
 
 async function main() {
+  if (!ENABLE_HEARTBEAT_ORACLE) {
+    console.log('HEARTBEAT ORACLE: ENABLE_HEARTBEAT_ORACLE is not set to 1; oracle process will exit.');
+    return;
+  }
+
   const { staking, p2p } = await createContext();
 
   const tick = async () => {

@@ -5,6 +5,35 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 PID_FILE="$SCRIPT_DIR/znode.pid"
+ORACLE_PID_FILE="$SCRIPT_DIR/heartbeat-oracle.pid"
+
+# Stop heartbeat oracle process if running (non-fatal if missing)
+if [ -f "$ORACLE_PID_FILE" ]; then
+  ORACLE_PID="$(cat "$ORACLE_PID_FILE" 2>/dev/null || true)"
+  if [ -z "$ORACLE_PID" ]; then
+    echo "[stop] Empty heartbeat-oracle pidfile, removing."
+    rm -f "$ORACLE_PID_FILE" || true
+  elif kill -0 "$ORACLE_PID" 2>/dev/null; then
+    echo "[stop] Stopping heartbeat oracle (PID $ORACLE_PID)..."
+    kill "$ORACLE_PID" 2>/dev/null || true
+    # Wait up to 10s for clean shutdown
+    for i in $(seq 1 10); do
+      if ! kill -0 "$ORACLE_PID" 2>/dev/null; then
+        echo "[stop] heartbeat oracle stopped."
+        break
+      fi
+      sleep 1
+    done
+    if kill -0 "$ORACLE_PID" 2>/dev/null; then
+      echo "[stop] heartbeat oracle did not exit after 10s, sending SIGKILL."
+      kill -9 "$ORACLE_PID" 2>/dev/null || true
+    fi
+    rm -f "$ORACLE_PID_FILE" || true
+  else
+    echo "[stop] No process with PID $ORACLE_PID for heartbeat oracle, removing stale pidfile."
+    rm -f "$ORACLE_PID_FILE" || true
+  fi
+fi
 
 if [ ! -f "$PID_FILE" ]; then
   echo "[stop] No pidfile found ($PID_FILE). Is znode running?"

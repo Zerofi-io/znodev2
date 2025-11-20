@@ -6,6 +6,8 @@ cd "$SCRIPT_DIR"
 
 PID_FILE="$SCRIPT_DIR/znode.pid"
 LOG_FILE="$SCRIPT_DIR/znode.log"
+ORACLE_PID_FILE="$SCRIPT_DIR/heartbeat-oracle.pid"
+ORACLE_LOG_FILE="$SCRIPT_DIR/heartbeat-oracle.log"
 MAX_LOG_SIZE="${MAX_LOG_SIZE_MB:-100}"  # Default 100MB
 MAX_LOG_FILES="${MAX_LOG_FILES:-5}"     # Keep 5 rotated logs
 
@@ -59,3 +61,9 @@ PID=$!
 echo "$PID" > "$PID_FILE"
 
 echo "[start] znode started with PID $PID (logs: $LOG_FILE)"
+
+echo "[start] Starting P2P heartbeat oracle..."
+nohup node p2p-heartbeat-oracle.js >> "$ORACLE_LOG_FILE" 2>&1 &
+ORACLE_PID=$!
+echo "$ORACLE_PID" > "$ORACLE_PID_FILE"
+echo "[start] heartbeat oracle started with PID $ORACLE_PID (logs: $ORACLE_LOG_FILE)"
