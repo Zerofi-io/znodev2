@@ -1,0 +1,13 @@
+node_modules/
+*.log
+*.out
+.env
+*.pid
+znode.pid
+monero-rpc.log
+.monero-wallets/
+wallets/
+
+GITHUB-PUSH/
+
+p2p-peer-id.json
