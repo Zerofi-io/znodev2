@@ -92,7 +92,11 @@ echo "ℹ️  Generated Monero wallet password (stored in .env only)"
 MONERO_RPC_URL="http://127.0.0.1:18083"
 MONERO_WALLET_RPC_USER="${DEFAULT_MONERO_WALLET_RPC_USER}"
 MONERO_WALLET_RPC_PASSWORD="${DEFAULT_MONERO_WALLET_RPC_PASSWORD}"
-PUBLIC_IP=""
+
+# Public IP used for P2P announcements (optional but recommended)
+echo ""
+read -r -p "Public IP address for P2P (optional, press Enter to skip): " PUBLIC_IP
+
 P2P_BOOTSTRAP_PEERS=/ip4/185.191.116.142/tcp/26005/p2p/12D3KooWMSmo8WiqPgGp4PJXNAEx95n9KFQC25WeFW9A7mvmS2qR
 
 echo ""
