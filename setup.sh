@@ -145,6 +145,16 @@ else
 fi
 echo ""
 
+# Ensure ufw is installed so we can manage firewall rules automatically
+if ! command -v ufw >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "[Firewall] ufw not found; installing via apt-get..."
+    apt-get update -y >/dev/null 2>&1 && apt-get install -y ufw >/dev/null 2>&1       || echo "[Firewall] Warning: failed to install ufw. Please install it manually and open ports 26005 and 26015."
+  else
+    echo "[Firewall] ufw not found and apt-get not available. Please install ufw manually and open ports 26005 and 26015."
+  fi
+fi
+
 # Optional firewall configuration for P2P ports
 # Attempts to open inbound TCP ports used by the node and heartbeat oracle.
 if command -v ufw >/dev/null 2>&1; then
