@@ -84,8 +84,17 @@ class LibP2PExchange {
       this.cleanupOldMessages();
     }, 60000);
     
-    const bootstrapPeers = this.getBootstrapPeers();
-    
+    const rawBootstrapPeers = this.getBootstrapPeers();
+    const bootstrapPeers = [];
+    for (const addr of rawBootstrapPeers) {
+      try {
+        const ma = multiaddr(addr);
+        bootstrapPeers.push(ma);
+      } catch (e) {
+        console.log('[P2P] Invalid bootstrap multiaddr, skipping:', addr, '-', e.message || String(e));
+      }
+    }
+
     const libp2pConfig = {
       peerId,
       addresses: {
