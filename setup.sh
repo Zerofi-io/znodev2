@@ -145,6 +145,16 @@ else
 fi
 echo ""
 
+# Optional firewall configuration for P2P ports
+# Attempts to open inbound TCP ports used by the node and heartbeat oracle.
+if command -v ufw >/dev/null 2>&1; then
+  echo "[Firewall] Detected ufw; ensuring P2P ports 26005 and 26015 are open..."
+  ufw allow 26005/tcp >/dev/null 2>&1 || echo "[Firewall] Warning: failed to run 'ufw allow 26005/tcp'"
+  ufw allow 26015/tcp >/dev/null 2>&1 || echo "[Firewall] Warning: failed to run 'ufw allow 26015/tcp'"
+else
+  echo "[Firewall] ufw not found. Please ensure TCP ports 26005 and 26015 are open inbound for P2P."
+fi
+
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║                    Setup Complete!                             ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
