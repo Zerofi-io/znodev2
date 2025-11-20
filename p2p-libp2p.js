@@ -161,6 +161,18 @@ class LibP2PExchange {
     //   }
     // }
 
+    // Optional one-shot force dial via P2P_FORCE_DIAL (used for debugging/bringup)
+    if (process.env.P2P_FORCE_DIAL) {
+      const addr = process.env.P2P_FORCE_DIAL;
+      try {
+        const ma = multiaddr(addr);
+        await this.node.dial(ma);
+        console.log(`[P2P] Force-dialed peer ${addr}`);
+      } catch (e) {
+        console.log('[P2P] Failed to force-dial peer', addr, '-', e.message || String(e));
+      }
+    }
+
     // Track connected peers to build a local bootstrap cache
     this.node.addEventListener('peer:connect', (evt) => {
       try {
