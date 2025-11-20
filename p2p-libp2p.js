@@ -144,6 +144,18 @@ class LibP2PExchange {
     
     await this.node.start();
 
+    // Proactively dial configured bootstrap peers to ensure connectivity
+    if (bootstrapPeers.length > 0) {
+      for (const addr of bootstrapPeers) {
+        try {
+          await this.node.dial(addr);
+          console.log(`[P2P] Dialed bootstrap peer ${addr}`);
+        } catch (e) {
+          console.log('[P2P] Failed to dial bootstrap peer', addr, '-', e.message || String(e));
+        }
+      }
+    }
+
     // Track connected peers to build a local bootstrap cache
     this.node.addEventListener('peer:connect', (evt) => {
       try {
