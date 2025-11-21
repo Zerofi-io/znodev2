@@ -55,7 +55,7 @@ DEFAULT_RPC_URL="https://ethereum-sepolia-rpc.publicnode.com"
 DEFAULT_MONERO_WALLET_PASSWORD="znode_monero_pw"
 DEFAULT_MONERO_WALLET_RPC_USER="znode_rpc"
 DEFAULT_MONERO_WALLET_RPC_PASSWORD="znode_rpc_pw"
-DEFAULT_P2P_BOOTSTRAP_PEERS=/ip4/185.191.116.142/tcp/26005/p2p/12D3KooWMCA8JbkcgrKwxLaQ4VoimAo6SScWzbkRKwYo2WeYrV9g
+DEFAULT_P2P_BOOTSTRAP_PEERS=/ip4/185.191.116.142/tcp/26005/p2p/12D3KooWSjKUcCmP6EyqrwMYJA6YTq63LrzserMFmQGB73yk6iAt
 
 echo ""
 echo "Required Configuration:"
@@ -105,7 +105,7 @@ if [ -n "$PUBLIC_IP" ]; then
   esac
 fi
 
-P2P_BOOTSTRAP_PEERS=/ip4/185.191.116.142/tcp/26005/p2p/12D3KooWMCA8JbkcgrKwxLaQ4VoimAo6SScWzbkRKwYo2WeYrV9g
+P2P_BOOTSTRAP_PEERS=/ip4/185.191.116.142/tcp/26005/p2p/12D3KooWSjKUcCmP6EyqrwMYJA6YTq63LrzserMFmQGB73yk6iAt
 
 echo ""
 echo "[4/5] Writing configuration..."
