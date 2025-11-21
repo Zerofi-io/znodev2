@@ -97,6 +97,7 @@ class LibP2PExchange {
       transports: [tcp()],
       streamMuxers: [mplex()],
       connectionEncryption: [noise()],
+      connectionEncrypters: [noise()],
       services: {
         ping: ping(),
         identify: identify(),
