@@ -146,6 +146,20 @@ class LibP2PExchange {
     
     await this.node.start();
 
+    // Manual dial of bootstrap peers for debug visibility on dial failures
+    if (bootstrapPeers.length > 0) {
+      for (const addr of bootstrapPeers) {
+        try {
+          const ma = multiaddr(addr);
+          console.log("[P2P] Debug: manual dial to bootstrap peer", ma.toString());
+          await this.node.dial(ma);
+          console.log("[P2P] Debug: manual dial to bootstrap peer succeeded", ma.toString());
+        } catch (e) {
+          console.log("[P2P] Debug: manual dial to bootstrap peer failed", addr, "-", e && e.stack ? e.stack : (e && e.message) ? e.message : String(e));
+        }
+      }
+    }
+
     // NOTE: manual bootstrap dial removed; libp2p bootstrap peerDiscovery will handle connections
 
     // Track connected peers to build a local bootstrap cache
