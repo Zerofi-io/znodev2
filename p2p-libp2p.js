@@ -69,7 +69,7 @@ class LibP2PExchange {
   }
 
   async start(port = 0) {
-    const peerId = await this.generatePeerId();
+    const privateKey = await this.loadPrivateKey();
     
     if (!process.env.CHAIN_ID) {
       throw new Error('[P2P] CHAIN_ID must be set for signature verification');
@@ -85,9 +85,10 @@ class LibP2PExchange {
     }, 60000);
     
     const bootstrapPeers = this.getBootstrapPeers();
+    console.log('[P2P] Bootstrap peers from config:', bootstrapPeers);
 
     const libp2pConfig = {
-      peerId,
+      privateKey,
       addresses: {
         listen: [
           `/ip4/0.0.0.0/tcp/${port || 0}`
@@ -145,33 +146,10 @@ class LibP2PExchange {
     
     await this.node.start();
 
-    // Proactively dial configured bootstrap peers to ensure connectivity
-    if (bootstrapPeers.length > 0) {
-      for (const addr of bootstrapPeers) {
-        try {
-          const ma = multiaddr(addr);
-          await this.node.dial(ma);
-          console.log(`[P2P] Dialed bootstrap peer ${addr}`);
-        } catch (e) {
-          console.log('[P2P] Failed to dial bootstrap peer', addr, '-', e.message || String(e));
-        }
-      }
-    }
-
-    // Optional one-shot force dial via P2P_FORCE_DIAL (used for debugging/bringup)
-    if (process.env.P2P_FORCE_DIAL) {
-      const addr = process.env.P2P_FORCE_DIAL;
-      try {
-        const ma = multiaddr(addr);
-        await this.node.dial(ma);
-        console.log(`[P2P] Force-dialed peer ${addr}`);
-      } catch (e) {
-        console.log('[P2P] Failed to force-dial peer', addr, '-', e.message || String(e));
-      }
-    }
+    // NOTE: manual bootstrap dial removed; libp2p bootstrap peerDiscovery will handle connections
 
     // Track connected peers to build a local bootstrap cache
-    this.node.addEventListener('peer:connect', (evt) => {
+    this.node.addEventListener('connection:open', (evt) => {
       try {
         const conn = evt.detail;
         const peerIdStr = conn.remotePeer && conn.remotePeer.toString ? conn.remotePeer.toString() : undefined;
@@ -209,7 +187,7 @@ class LibP2PExchange {
     return;
   }
 
-  async generatePeerId() {
+  async loadPrivateKey() {
     const keyPath = process.env.P2P_PEER_KEY_FILE || './p2p-peer-id.json';
     const backupPath = '/root/.znode-backup/p2p-peer-id.json';
     const { generateKeyPair, privateKeyToProtobuf, privateKeyFromProtobuf } = await import('@libp2p/crypto/keys');
@@ -246,7 +224,7 @@ class LibP2PExchange {
 
       try {
         const privateKey = privateKeyFromProtobuf(buf);
-        return await peerIdFromPrivateKey(privateKey);
+        return privateKey;
       } catch (e) {
         throw new Error('Invalid P2P key protobuf: ' + (e.message || String(e)));
       }
@@ -272,7 +250,7 @@ class LibP2PExchange {
       } catch (writeErr) {
         console.log('[P2P] Warning: could not save P2P key: ' + (writeErr.message || String(writeErr)));
       }
-      return await peerIdFromPrivateKey(privateKey);
+      return privateKey;
     }
   }
 

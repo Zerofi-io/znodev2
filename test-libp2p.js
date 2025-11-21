@@ -15,6 +15,18 @@ import { ping } from '@libp2p/ping';
 import { createEd25519PeerId } from '@libp2p/peer-id-factory';
 import crypto from 'crypto';
 
+if (typeof Promise.withResolvers !== 'function') {
+  Promise.withResolvers = () => {
+    let resolve;
+    let reject;
+    const promise = new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  };
+}
+
 async function testLibP2P() {
   console.log('[test-libp2p] Starting LibP2P smoke test...');
   
