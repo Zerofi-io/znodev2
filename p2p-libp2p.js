@@ -84,16 +84,7 @@ class LibP2PExchange {
       this.cleanupOldMessages();
     }, 60000);
     
-    const rawBootstrapPeers = this.getBootstrapPeers();
-    const bootstrapPeers = [];
-    for (const addr of rawBootstrapPeers) {
-      try {
-        const ma = multiaddr(addr);
-        bootstrapPeers.push(ma);
-      } catch (e) {
-        console.log('[P2P] Invalid bootstrap multiaddr, skipping:', addr, '-', e.message || String(e));
-      }
-    }
+    const bootstrapPeers = this.getBootstrapPeers();
 
     const libp2pConfig = {
       peerId,
@@ -155,20 +146,17 @@ class LibP2PExchange {
     await this.node.start();
 
     // Proactively dial configured bootstrap peers to ensure connectivity
-    // NOTE: This manual dial block is disabled; libp2p's bootstrap({ list })
-    // already handles connecting to configured peers. Leaving it commented
-    // out avoids double-dial and version-specific multiaddr issues.
-    // if (bootstrapPeers.length > 0) {
-    //   for (const addr of bootstrapPeers) {
-    //     try {
-    //       const ma = multiaddr(addr);
-    //       await this.node.dial(ma);
-    //       console.log(`[P2P] Dialed bootstrap peer ${addr}`);
-    //     } catch (e) {
-    //       console.log('[P2P] Failed to dial bootstrap peer', addr, '-', e.message || String(e));
-    //     }
-    //   }
-    // }
+    if (bootstrapPeers.length > 0) {
+      for (const addr of bootstrapPeers) {
+        try {
+          const ma = multiaddr(addr);
+          await this.node.dial(ma);
+          console.log(`[P2P] Dialed bootstrap peer ${addr}`);
+        } catch (e) {
+          console.log('[P2P] Failed to dial bootstrap peer', addr, '-', e.message || String(e));
+        }
+      }
+    }
 
     // Optional one-shot force dial via P2P_FORCE_DIAL (used for debugging/bringup)
     if (process.env.P2P_FORCE_DIAL) {
