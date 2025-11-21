@@ -414,7 +414,7 @@ class LibP2PExchange {
       console.log(`[P2P] Subscribed to topic: ${topic} (${membersLower.length} members)`);
     }
 
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 8000));
     
     const peers = this.node.services.pubsub.getSubscribers(topic);
     console.log(`[P2P] Connected to ${peers.length} peers on cluster topic`);
@@ -1041,7 +1041,7 @@ class LibP2PExchange {
         console.log(`[P2P] Round ${round} progress: ${memberCount}/${expected} nodes`);
       }
 
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 8000));
     }
   }
 
@@ -1384,7 +1384,7 @@ class LibP2PExchange {
         console.log(`[P2P] Identities progress: ${count}/${expected} nodes`);
       }
       
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 8000));
     }
     
     let count = 0;
@@ -1467,7 +1467,7 @@ class LibP2PExchange {
         console.log(`[P2P] SST identities progress: ${count}/${expected} nodes`);
       }
       
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 8000));
     }
     
     const identities = this.getSSTIdentities(clusterId);
@@ -1507,7 +1507,7 @@ class LibP2PExchange {
         console.log(`[P2P] SST shares progress: ${count}/${expected} shares`);
       }
       
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 8000));
     }
     
     let count = 0;
