@@ -1920,12 +1920,31 @@ class ZNode {
         offset += maxScan;
       }
 
-      // On-chain liveness is now driven by signed heartbeats and decentralized slashing
-      // rather than continuous on-chain heartbeats. We no longer attempt to infer real-time
-      // online status from staking state here; instead, treat on-chain liveness as 0 and
-      // rely on the P2P metric below for actual online counts.
+      // On-chain live nodes: eligible (staked/registered) nodes that are also sending
+      // recent signed heartbeats over P2P. We intersect the on-chain eligible set with
+      // the P2P heartbeat map using a TTL window.
+      let onchainOnlineCount = 0;
+      if (this.p2p && typeof this.p2p.getHeartbeats === 'function' && eligible.length > 0) {
+        try {
+          const ttlRaw = process.env.HEARTBEAT_ONLINE_TTL_MS;
+          const ttlParsed = ttlRaw != null ? Number(ttlRaw) : NaN;
+          const ttlMs = (Number.isFinite(ttlParsed) && ttlParsed > 0) ? ttlParsed : undefined;
+          const hbMap = this.p2p.getHeartbeats(ttlMs);
+          for (const addr of eligible) {
+            if (!addr) continue;
+            const rec = hbMap.get(addr.toLowerCase());
+            if (rec && rec.timestamp != null) {
+              onchainOnlineCount++;
+            }
+          }
+        } catch {
+          // if heartbeat inspection fails, fall through and report 0 live on-chain nodes
+          onchainOnlineCount = 0;
+        }
+      }
+
       if (eligible.length > 0) {
-        console.log('Online Members in Queue (on-chain): 0/' + eligible.length);
+        console.log('Online Members in Queue (on-chain): ' + onchainOnlineCount + '/' + eligible.length);
       } else {
         console.log('Online Members in Queue (on-chain): 0/0');
       }
