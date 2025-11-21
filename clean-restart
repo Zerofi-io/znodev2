@@ -5,13 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 if [ -f "$SCRIPT_DIR/.env" ]; then
-  # Load .env so MONERO_WALLET_DIR and related settings are applied
+  # Load .env so MONERO_WALLET_DIR, WALLET_BACKUP_DIR etc. are applied
   set -a
   . "$SCRIPT_DIR/.env"
   set +a
 fi
 
-echo "[clean-restart] This will STOP all znode processes, STOP monero-wallet-rpc, and DELETE znode-created Monero wallets and local node state."
+echo "[clean-restart] This will STOP all znode processes, STOP monero-wallet-rpc, and DELETE znode-created Monero wallets, backups, and local node state."
 echo "[clean-restart] It is intended to reset this VPS to a fresh znode state."
 read -r -p "Are you sure you want to continue? [y/N]: " ans
 case "${ans,,}" in
@@ -33,7 +33,7 @@ fi
 
 rm -f "$SCRIPT_DIR/znode.pid"
 
-# Stop monero-wallet-rpc
+# Stop monero-wallet-rpc via pidfile if present
 if [ -f "$SCRIPT_DIR/monero-rpc.pid" ]; then
   MPID="$(cat "$SCRIPT_DIR/monero-rpc.pid" 2>/dev/null || true)"
   if [ -n "$MPID" ] && kill -0 "$MPID" 2>/dev/null; then
@@ -42,6 +42,16 @@ if [ -f "$SCRIPT_DIR/monero-rpc.pid" ]; then
     sleep 1 || true
   fi
   rm -f "$SCRIPT_DIR/monero-rpc.pid"
+fi
+
+# Also stop any stray monero-wallet-rpc processes not tracked by the pidfile
+echo "[clean-restart] Stopping any stray monero-wallet-rpc processes..."
+pkill -f "monero-wallet-rpc" 2>/dev/null || true
+sleep 1 || true
+if pgrep -f "monero-wallet-rpc" >/dev/null 2>&1; then
+  echo "[clean-restart] WARNING: Some monero-wallet-rpc processes still running, force killing..."
+  pkill -9 -f "monero-wallet-rpc" 2>/dev/null || true
+  sleep 1 || true
 fi
 
 # Derive wallet directory (match start-monero-rpc.sh defaults)
@@ -54,13 +64,29 @@ else
   echo "[clean-restart] Wallet directory $WALLET_DIR does not exist; nothing to delete."
 fi
 
-# Delete local node state files (but NOT peer ID backup)
+# Delete any znode wallet backups so clean-restart fully resets node state
+BACKUP_DIR="${WALLET_BACKUP_DIR:-$HOME/.znode-backup/wallets}"
+if [ -d "$BACKUP_DIR" ]; then
+  echo "[clean-restart] Removing znode wallet backups from $BACKUP_DIR..."
+  find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'znode_*' -o -name 'znode_*.*' \) -printf '  deleted %f\n' -delete 2>/dev/null || true
+else
+  echo "[clean-restart] Backup directory $BACKUP_DIR does not exist; nothing to delete."
+fi
+
+# Delete local node state files and P2P identity (including backup)
 echo "[clean-restart] Deleting local node state (logs, peer IDs, SST data)..."
 rm -f "$SCRIPT_DIR/znode.log" "$SCRIPT_DIR/znode.log."* 2>/dev/null || true
 rm -f "$SCRIPT_DIR/monero-rpc.log" 2>/dev/null || true
 rm -f "$SCRIPT_DIR/p2p-peer-id.json" 2>/dev/null || true
 rm -f "$SCRIPT_DIR/p2p-peers.json" 2>/dev/null || true
 rm -rf "$SCRIPT_DIR/sst-data" 2>/dev/null || true
+
+# Remove P2P peer key backup so a new peer ID is generated on next start
+P2P_BACKUP_DIR="${P2P_BACKUP_DIR:-/root/.znode-backup}"
+if [ -d "$P2P_BACKUP_DIR" ]; then
+  echo "[clean-restart] Removing P2P peer key backup from $P2P_BACKUP_DIR..."
+  rm -f "$P2P_BACKUP_DIR/p2p-peer-id.json" 2>/dev/null || true
+fi
 
 # Optionally reset .env
 if [ -f "$SCRIPT_DIR/.env" ]; then
@@ -75,5 +101,5 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
   esac
 fi
 
-echo "[clean-restart] Reset complete. Peer ID and Monero wallet password preserved in /root/.znode-backup/"
-echo "[clean-restart] You can now run ./start to restart the node."
+echo "[clean-restart] Reset complete. Monero wallet password (and any non-znode data) may still be preserved in /root/.znode-backup/"
+echo "[clean-restart] You can now run ./setup and then ./start to restart the node with a fresh peer ID."
