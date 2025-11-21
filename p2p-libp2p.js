@@ -1027,6 +1027,12 @@ class LibP2PExchange {
       const elapsed = Date.now() - startTime;
       const memberCount = getMemberCount();
 
+      const collected = this.roundData.get(key);
+      const missing = membersLower.filter(a => !collected || !collected.has(a));
+      if (missing.length > 0 && memberCount < expected) {
+        console.log(`[P2P] Round ${round} missing from: ${missing.join(', ')}`);
+      }
+
       if (memberCount >= expected) {
         console.log(`[P2P] Round ${round} complete: ${memberCount}/${expected} nodes`);
         return true;
