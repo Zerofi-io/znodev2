@@ -2037,8 +2037,8 @@ class ZNode {
         
         const livenessTimeoutRaw = process.env.LIVENESS_TIMEOUT_MS;
         const livenessTimeoutParsed = livenessTimeoutRaw != null ? Number(livenessTimeoutRaw) : NaN;
-        // If LIVENESS_TIMEOUT_MS <= 0, treat as no-timeout (wait indefinitely for full quorum).
-        const livenessTimeout = Number.isFinite(livenessTimeoutParsed) ? livenessTimeoutParsed : 45000;
+        // If LIVENESS_TIMEOUT_MS is unset, default to 0 (no-timeout, wait indefinitely for full quorum).
+        const livenessTimeout = Number.isFinite(livenessTimeoutParsed) ? livenessTimeoutParsed : 0;
 
         console.log(`  → Pinging candidate cluster nodes for liveness (quorum: ${livenessQuorum}/${clusterSize})...`);
         try {
