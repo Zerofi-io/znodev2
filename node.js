@@ -2007,7 +2007,7 @@ class ZNode {
           return;
         }
 
-        // Liveness ping round: ensure nodes can talk over P2P before binding cluster
+        // Liveness ping rounds: ensure nodes can talk over P2P before binding cluster
         if (!this.p2p || !this.p2p.node) {
           console.log('⚠️ P2P not available for liveness check; skipping candidate cluster');
           return;
@@ -2015,17 +2015,6 @@ class ZNode {
 
         const LIVENESS_ROUND = 9999;
         const liveKeyInitial = `${clusterId}_${LIVENESS_ROUND}`;
-        try {
-          if (this.p2p.roundData && this.p2p.roundData.has(liveKeyInitial)) {
-            this.p2p.roundData.delete(liveKeyInitial);
-          }
-          if (this.p2p.myData && this.p2p.myData.has(liveKeyInitial)) {
-            this.p2p.myData.delete(liveKeyInitial);
-          }
-        } catch {
-          // best-effort cleanup; ignore
-        }
-
         const livenessQuorumRaw = process.env.LIVENESS_QUORUM;
         const livenessQuorumParsed = livenessQuorumRaw != null ? Number(livenessQuorumRaw) : NaN;
         let livenessQuorum = (Number.isFinite(livenessQuorumParsed) && livenessQuorumParsed > 0) ? livenessQuorumParsed : clusterSize;
@@ -2037,26 +2026,54 @@ class ZNode {
         
         const livenessTimeoutRaw = process.env.LIVENESS_TIMEOUT_MS;
         const livenessTimeoutParsed = livenessTimeoutRaw != null ? Number(livenessTimeoutRaw) : NaN;
-        // If LIVENESS_TIMEOUT_MS is unset, default to 0 (no-timeout, wait indefinitely for full quorum).
-        const livenessTimeout = Number.isFinite(livenessTimeoutParsed) ? livenessTimeoutParsed : 0;
+        // Per-attempt timeout in ms; if <= 0, default to 45s for each attempt.
+        const livenessTimeout = (Number.isFinite(livenessTimeoutParsed) && livenessTimeoutParsed > 0) ? livenessTimeoutParsed : 45000;
 
-        console.log(`  → Pinging candidate cluster nodes for liveness (quorum: ${livenessQuorum}/${clusterSize})...`);
-        try {
-          await this.p2p.broadcastRoundData(clusterId, LIVENESS_ROUND, 'ping');
-          const live = await this.p2p.waitForRoundCompletion(clusterId, LIVENESS_ROUND, members, livenessTimeout);
-          
-          const liveKeyCheck = `${clusterId}_${LIVENESS_ROUND}`;
-          const collected = this.p2p.roundData.get(liveKeyCheck);
-          const liveCount = collected ? collected.size : 0;
-          
-          if (liveCount < livenessQuorum) {
-            console.log(`  ❌ Liveness check failed: ${liveCount}/${clusterSize} nodes responded (need ${livenessQuorum}); skipping candidate cluster`);
+        const maxAttemptsRaw = process.env.LIVENESS_MAX_ATTEMPTS;
+        const maxAttemptsParsed = maxAttemptsRaw != null ? Number(maxAttemptsRaw) : NaN;
+        const maxAttempts = (Number.isFinite(maxAttemptsParsed) && maxAttemptsParsed > 0) ? maxAttemptsParsed : 0; // 0 = infinite attempts
+
+        let attempt = 0;
+        while (true) {
+          attempt++;
+          // Clear any prior liveness round data for this cluster
+          try {
+            if (this.p2p.roundData && this.p2p.roundData.has(liveKeyInitial)) {
+              this.p2p.roundData.delete(liveKeyInitial);
+            }
+            if (this.p2p.myData && this.p2p.myData.has(liveKeyInitial)) {
+              this.p2p.myData.delete(liveKeyInitial);
+            }
+          } catch {
+            // best-effort cleanup; ignore
+          }
+
+          console.log(`  → Pinging candidate cluster nodes for liveness (attempt ${attempt}, quorum: ${livenessQuorum}/${clusterSize})...`);
+          try {
+            await this.p2p.broadcastRoundData(clusterId, LIVENESS_ROUND, 'ping');
+            await this.p2p.waitForRoundCompletion(clusterId, LIVENESS_ROUND, members, livenessTimeout);
+
+            const liveKeyCheck = `${clusterId}_${LIVENESS_ROUND}`;
+            const collected = this.p2p.roundData.get(liveKeyCheck);
+            const liveCount = collected ? collected.size : 0;
+
+            if (liveCount < livenessQuorum) {
+              console.log(`  ❌ Liveness check failed (attempt ${attempt}): ${liveCount}/${clusterSize} nodes responded (need ${livenessQuorum})`);
+            } else {
+              console.log(`  ✓ Liveness check passed for candidate cluster (${liveCount}/${clusterSize} nodes) after ${attempt} attempt(s)`);
+              break;
+            }
+          } catch (e) {
+            console.log(`  ⚠️ Liveness ping error (attempt ${attempt}):`, e.message || String(e));
+          }
+
+          if (maxAttempts > 0 && attempt >= maxAttempts) {
+            console.log(`  ❌ Liveness check giving up after ${attempt} attempts; skipping candidate cluster`);
             return;
           }
-          console.log(`  ✓ Liveness check passed for candidate cluster (${liveCount}/${clusterSize} nodes)`);
-        } catch (e) {
-          console.log('  ⚠️ Liveness ping error:', e.message || String(e));
-          return;
+
+          // Short delay before next liveness attempt
+          await new Promise(r => setTimeout(r, 2000));
         }
 
         if (this._clusterOrchestrationLock) {
