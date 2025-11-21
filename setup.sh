@@ -97,6 +97,14 @@ MONERO_WALLET_RPC_PASSWORD="${DEFAULT_MONERO_WALLET_RPC_PASSWORD}"
 echo ""
 read -r -p "Public IP address for P2P (optional, press Enter to skip): " PUBLIC_IP
 
+# Normalize PUBLIC_IP input: allow user@host and strip username if present
+if [ -n "$PUBLIC_IP" ]; then
+  # If in the form user@host, keep only host
+  case "$PUBLIC_IP" in
+    *@*) PUBLIC_IP="${PUBLIC_IP##*@}" ;;
+  esac
+fi
+
 P2P_BOOTSTRAP_PEERS=/ip4/185.191.116.142/tcp/26005/p2p/12D3KooWMCA8JbkcgrKwxLaQ4VoimAo6SScWzbkRKwYo2WeYrV9g
 
 echo ""
