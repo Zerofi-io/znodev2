@@ -62,8 +62,12 @@ echo "$PID" > "$PID_FILE"
 
 echo "[start] znode started with PID $PID (logs: $LOG_FILE)"
 
-echo "[start] Starting P2P heartbeat oracle..."
-nohup node p2p-heartbeat-oracle.js >> "$ORACLE_LOG_FILE" 2>&1 &
-ORACLE_PID=$!
-echo "$ORACLE_PID" > "$ORACLE_PID_FILE"
-echo "[start] heartbeat oracle started with PID $ORACLE_PID (logs: $ORACLE_LOG_FILE)"
+if [ "${ENABLE_HEARTBEAT_ORACLE:-0}" = "1" ]; then
+  echo "[start] Starting P2P heartbeat oracle..."
+  nohup node p2p-heartbeat-oracle.js >> "$ORACLE_LOG_FILE" 2>&1 &
+  ORACLE_PID=$!
+  echo "$ORACLE_PID" > "$ORACLE_PID_FILE"
+  echo "[start] heartbeat oracle started with PID $ORACLE_PID (logs: $ORACLE_LOG_FILE)"
+else
+  echo "[start] Skipping P2P heartbeat oracle (ENABLE_HEARTBEAT_ORACLE!=1)"
+fi

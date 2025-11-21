@@ -30,6 +30,9 @@ class LibP2PExchange {
     this.ethereumPrivateKey = ethereumPrivateKey;
     this.publicIP = publicIP;
     this.node = null;
+    // EIP-712 heartbeat domain (chainId + staking contract)
+    this.heartbeatChainId = null;
+    this.heartbeatStakingAddress = null;
     this.port = 0;
     this.roundData = new Map();
     this.myData = new Map();
@@ -68,6 +71,25 @@ class LibP2PExchange {
     console.warn('[P2P] Security Notice: Ethereum private key is used for P2P ECDH encryption. Memory exposure compromises Ethereum account.');
   }
 
+  setHeartbeatDomain(chainId, stakingAddress) {
+    try {
+      const cid = Number(chainId);
+      if (!Number.isFinite(cid) || cid <= 0) {
+        console.log('[P2P] Invalid heartbeat domain chainId:', chainId);
+        return;
+      }
+      if (!stakingAddress) {
+        console.log('[P2P] Invalid heartbeat domain staking address:', stakingAddress);
+        return;
+      }
+      this.heartbeatChainId = cid;
+      this.heartbeatStakingAddress = stakingAddress.toLowerCase();
+      console.log('[P2P] Heartbeat domain set:', this.heartbeatChainId, this.heartbeatStakingAddress);
+    } catch (e) {
+      console.log('[P2P] Failed to set heartbeat domain:', e.message || String(e));
+    }
+  }
+
   async start(port = 0) {
     const privateKey = await this.loadPrivateKey();
     
@@ -79,6 +101,9 @@ class LibP2PExchange {
       throw new Error(`[P2P] Invalid CHAIN_ID: ${process.env.CHAIN_ID}`);
     }
     console.log(`[P2P] Using CHAIN_ID: ${chainId}`);
+    if (this.heartbeatChainId == null) {
+      this.heartbeatChainId = chainId;
+    }
     
     this.cleanupInterval = setInterval(() => {
       this.cleanupOldMessages();
@@ -1667,6 +1692,11 @@ class LibP2PExchange {
       return;
     }
 
+    if (!this.heartbeatChainId || !this.heartbeatStakingAddress) {
+      console.log('[P2P] Heartbeat broadcast skipped: heartbeat domain not configured');
+      return;
+    }
+
     const topic = '/znode/heartbeat';
     
     if (!this.subscriptions.has(topic)) {
@@ -1676,40 +1706,51 @@ class LibP2PExchange {
     }
 
     try {
-      const timestamp = Date.now();
-      const nonce = ethers.hexlify(crypto.randomBytes(32));
-      
-      const message = `heartbeat:${this.ethereumAddress}:${timestamp}:${nonce}`;
-      const digest = ethers.id(message);
-      const signature = await this.signHeartbeat(digest);
+      const timestamp = Math.floor(Date.now() / 1000); // seconds since epoch
+
+      const domain = {
+        name: 'ZFIStaking',
+        version: '1',
+        chainId: this.heartbeatChainId,
+        verifyingContract: this.heartbeatStakingAddress,
+      };
+
+      const types = {
+        Heartbeat: [
+          { name: 'node', type: 'address' },
+          { name: 'timestamp', type: 'uint256' },
+        ],
+      };
+
+      const value = {
+        node: this.ethereumAddress,
+        timestamp,
+      };
+
+      const wallet = new ethers.Wallet(this.ethereumPrivateKey);
+      const signature = await wallet.signTypedData(domain, types, value);
       
       const msg = {
         type: 'p2p/heartbeat',
         address: this.ethereumAddress,
         timestamp,
-        nonce,
-        signature
+        signature,
       };
       
       const bytes = new TextEncoder().encode(JSON.stringify(msg));
       await this.node.services.pubsub.publish(topic, bytes);
       
-      this.heartbeats.set(this.ethereumAddress.toLowerCase(), timestamp);
+      this.heartbeats.set(this.ethereumAddress.toLowerCase(), { timestamp, signature });
       console.log('[P2P] Heartbeat broadcast sent');
     } catch (e) {
       console.log('[P2P] Heartbeat broadcast error:', e.message || String(e));
     }
   }
 
-  async signHeartbeat(digest) {
-    const wallet = new ethers.Wallet(this.ethereumPrivateKey);
-    return await wallet.signMessage(ethers.getBytes(digest));
-  }
-
   handleHeartbeat(data) {
-    const { address, timestamp, nonce, signature } = data || {};
+    const { address, timestamp, signature } = data || {};
     
-    if (!address || !timestamp || !nonce || !signature) {
+    if (!address || timestamp == null || !signature) {
       console.log('[P2P] Invalid heartbeat message: missing fields');
       return;
     }
@@ -1719,33 +1760,52 @@ class LibP2PExchange {
       return;
     }
 
-    const now = Date.now();
+    const nowMs = Date.now();
     const maxAge = Number(process.env.P2P_MESSAGE_MAX_AGE_MS || 300000);
     const maxSkew = Number(process.env.P2P_CLOCK_SKEW_MS || 120000);
+    const tsMs = Number(timestamp) * 1000;
     
-    if (timestamp > now) {
-      const futureSkew = timestamp - now;
+    if (tsMs > nowMs) {
+      const futureSkew = tsMs - nowMs;
       if (futureSkew > maxSkew) {
         console.log(`[P2P] Heartbeat from future from ${address.slice(0, 8)}: ${futureSkew}ms > ${maxSkew}ms`);
         return;
       }
     } else {
-      const age = now - timestamp;
+      const age = nowMs - tsMs;
       if (age > maxAge) {
         console.log(`[P2P] Heartbeat too old from ${address.slice(0, 8)}: ${age}ms > ${maxAge}ms`);
         return;
       }
     }
 
-    const messageId = `heartbeat_${address}_${nonce}`;
+    const messageId = `heartbeat_${address}_${timestamp}`;
     if (this.seenMessages.has(messageId)) {
       return;
     }
 
     try {
-      const message = `heartbeat:${address}:${timestamp}:${nonce}`;
-      const digest = ethers.id(message);
-      const recovered = ethers.recoverAddress(digest, signature);
+      if (!this.heartbeatChainId || !this.heartbeatStakingAddress) {
+        console.log('[P2P] Heartbeat domain not configured, skipping verification');
+        return;
+      }
+
+      const domain = {
+        name: 'ZFIStaking',
+        version: '1',
+        chainId: this.heartbeatChainId,
+        verifyingContract: this.heartbeatStakingAddress,
+      };
+
+      const types = {
+        Heartbeat: [
+          { name: 'node', type: 'address' },
+          { name: 'timestamp', type: 'uint256' },
+        ],
+      };
+
+      const value = { node: address, timestamp };
+      const recovered = ethers.verifyTypedData(domain, types, value, signature);
       
       if (recovered.toLowerCase() !== address.toLowerCase()) {
         console.log(`[P2P] Invalid heartbeat signature from ${address.slice(0, 8)}`);
@@ -1753,7 +1813,7 @@ class LibP2PExchange {
       }
 
       this.seenMessages.set(messageId, Date.now());
-      this.heartbeats.set(address.toLowerCase(), timestamp);
+      this.heartbeats.set(address.toLowerCase(), { timestamp: Number(timestamp), signature });
       console.log(`[P2P] Received heartbeat from ${address.slice(0, 8)}`);
     } catch (e) {
       console.log(`[P2P] Heartbeat verification error from ${address.slice(0, 8)}:`, e.message);
@@ -1764,9 +1824,10 @@ class LibP2PExchange {
     const now = Date.now();
     const maxAge = Number(ttlMs || process.env.P2P_HEARTBEAT_TTL_MS || 1800000);
     const out = new Map();
-    for (const [addr, ts] of this.heartbeats.entries()) {
-      if (now - ts <= maxAge) {
-        out.set(addr, ts);
+    for (const [addr, rec] of this.heartbeats.entries()) {
+      const tsMs = Number(rec.timestamp) * 1000;
+      if (now - tsMs <= maxAge) {
+        out.set(addr, rec);
       }
     }
     return out;

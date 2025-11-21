@@ -238,10 +238,18 @@ async function oracleTick(staking, p2p) {
         continue;
       }
 
-      const lastP2P = p2p.getLastHeartbeat(nodeAddr);
+      const lastP2PRec = p2p.getLastHeartbeat(nodeAddr);
+      let lastP2PTsMs = null;
 
-      if (typeof lastP2P === 'number' && Number.isFinite(lastP2P)) {
-        const ageMs = nowMs - lastP2P;
+      if (lastP2PRec && typeof lastP2PRec === 'object' && 'timestamp' in lastP2PRec) {
+        lastP2PTsMs = Number(lastP2PRec.timestamp) * 1000;
+      } else if (typeof lastP2PRec === 'number' && Number.isFinite(lastP2PRec)) {
+        // Backwards compatibility with older p2p-libp2p.js that stored timestamps in ms
+        lastP2PTsMs = Number(lastP2PRec);
+      }
+
+      if (lastP2PTsMs != null) {
+        const ageMs = nowMs - lastP2PTsMs;
         if (ageMs <= ONLINE_TTL_MS) {
           // Node is considered online by P2P
           OFFLINE_SINCE.delete(nodeLower);

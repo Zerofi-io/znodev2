@@ -134,6 +134,7 @@ class ZNode {
       'function recordP2PHeartbeat(address _node) external',
       'function getActiveNodes() external view returns (address[] memory)',
       'function slashForDowntimeProgressive(address _node) external',
+      'function slashForDowntimeWithProof(address _node, uint256 lastHeartbeatTs, bytes calldata sig) external',
       'function checkSlashingStatus(address _node) external view returns (bool needsSlash, uint256 stage, uint256 hoursOffline)',
       'function isBlacklisted(address _node) external view returns (bool)',
       'function heartbeatOracle() external view returns (address)',
@@ -447,6 +448,15 @@ class ZNode {
     this.zfi = new ethers.Contract(ZFI_ADDR, this._zfiABI, this.wallet);
     this.exchangeCoordinator = new ethers.Contract(COORDINATOR_ADDR, this._exchangeCoordinatorABI, this.wallet);
 
+    // Configure P2P heartbeat EIP-712 domain (used for signed heartbeats)
+    if (this.p2p && typeof this.p2p.setHeartbeatDomain === 'function') {
+      try {
+        this.p2p.setHeartbeatDomain(this.chainId, STAKING_ADDR);
+      } catch (e) {
+        console.warn('⚠️  Failed to configure P2P heartbeat domain:', e.message || String(e));
+      }
+    }
+
     try {
       await this.checkRequirements();
       await this.setupMonero();
@@ -460,6 +470,7 @@ class ZNode {
 
       await this.ensureRegistered();
       await this.monitorNetwork();
+      this.startSlashingLoop();
     } catch (e) {
       console.error('\n❌ Startup failed:', e.message || String(e));
       console.error('Cleaning up...');
@@ -587,7 +598,7 @@ class ZNode {
       throw new Error('This address has been blacklisted due to slashing. It cannot participate as a node.');
     }
 
-    // Check for pending downtime slashing that has not yet been applied
+    // Check for pending downtime slashing (informational only; slashing is now permissionless)
     try {
       const res = await this.staking.checkSlashingStatus(this.wallet.address);
       if (Array.isArray(res) && res.length >= 3) {
@@ -595,7 +606,7 @@ class ZNode {
         const stage = res[1];
         const hoursOfflinePending = res[2];
         if (needsSlash) {
-          throw new Error(`This node has a pending downtime slash (stage ${stage}, offline ${hoursOfflinePending} hours). Wait for the heartbeat oracle to apply the slash before restarting.`);
+          console.warn(`⚠️  checkSlashingStatus reports pending downtime slash (stage ${stage}, offline ${hoursOfflinePending} hours). Network participants may submit a slashing tx using signed heartbeats.`);
         }
       }
     } catch (e) {
@@ -1538,6 +1549,130 @@ class ZNode {
     this._heartbeatTimer = setInterval(tick, intervalSec * 1000);
     setTimeout(tick, 10_000);
   }
+
+  _currentSlashEpoch(blockTimestamp, epochSec) {
+    const ts = typeof blockTimestamp === 'bigint' ? Number(blockTimestamp) : Number(blockTimestamp || 0);
+    if (!Number.isFinite(ts) || ts <= 0) return 0;
+    return Math.floor(ts / epochSec);
+  }
+
+  _selectSlashLeader(activeNodes, targetNode, epoch, salt) {
+    if (!activeNodes || activeNodes.length === 0) return null;
+    const seed = ethers.keccak256(
+      ethers.solidityPacked(
+        ['address', 'uint256', 'bytes32'],
+        [targetNode, epoch, salt]
+      )
+    );
+    const asBigInt = BigInt(seed);
+    const idx = Number(asBigInt % BigInt(activeNodes.length));
+    return activeNodes[idx];
+  }
+
+  startSlashingLoop() {
+    if (this._slashingTimer) return;
+    if (!this.staking || !this.provider || !this.p2p) return;
+
+    const epochRaw = process.env.SLASH_EPOCH_SECONDS;
+    const epochParsed = epochRaw != null ? Number(epochRaw) : NaN;
+    const epochSec = (Number.isFinite(epochParsed) && epochParsed > 0) ? epochParsed : 600; // default 10 minutes
+
+    const offlineRaw = process.env.SLASH_OFFLINE_THRESHOLD_HOURS;
+    const offlineParsed = offlineRaw != null ? Number(offlineRaw) : NaN;
+    const offlineHours = (Number.isFinite(offlineParsed) && offlineParsed > 0) ? offlineParsed : 48;
+
+    const loopRaw = process.env.SLASH_LOOP_INTERVAL_MS;
+    const loopParsed = loopRaw != null ? Number(loopRaw) : NaN;
+    const loopMs = (Number.isFinite(loopParsed) && loopParsed > 0) ? loopParsed : 5 * 60 * 1000; // default 5 minutes
+
+    const stakingAddr = (this.staking.target || this.staking.address || '').toString();
+    const salt = stakingAddr && stakingAddr !== ethers.ZeroAddress ? stakingAddr : ethers.ZeroHash;
+
+    const selfAddr = this.wallet.address.toLowerCase();
+
+    const tick = async () => {
+      try {
+        if (!this.staking || !this.provider || !this.p2p) return;
+
+        const latest = await this.provider.getBlock('latest');
+        if (!latest || latest.timestamp == null) return;
+
+        const epoch = this._currentSlashEpoch(latest.timestamp, epochSec);
+        const activeNodes = await this.staking.getActiveNodes();
+        if (!Array.isArray(activeNodes) || activeNodes.length === 0) return;
+
+        const nowSec = Math.floor(Date.now() / 1000);
+
+        for (const nodeAddr of activeNodes) {
+          if (!nodeAddr) continue;
+          const lower = nodeAddr.toLowerCase();
+          if (lower === selfAddr) continue;
+
+          const hb = this.p2p.getLastHeartbeat(nodeAddr);
+          if (!hb || hb.timestamp == null) continue;
+
+          const tsSec = Number(hb.timestamp);
+          if (!Number.isFinite(tsSec) || tsSec <= 0) continue;
+
+          const ageSec = Math.max(0, nowSec - tsSec);
+          const hoursOffline = ageSec / 3600;
+          if (hoursOffline < offlineHours) continue;
+
+          const leader = this._selectSlashLeader(activeNodes, nodeAddr, epoch, salt);
+          if (!leader || leader.toLowerCase() !== selfAddr) continue;
+
+          // Optional local gas check
+          const minGasWeiRaw = process.env.SLASH_MIN_GAS_WEI;
+          if (minGasWeiRaw) {
+            try {
+              const balance = await this.provider.getBalance(this.wallet.address);
+              const minGasWei = BigInt(minGasWeiRaw);
+              if (balance < minGasWei) {
+                continue;
+              }
+            } catch {
+              // If balance check fails, fall through and attempt; node/operator can tune config
+            }
+          }
+
+          const tsArg = BigInt(tsSec);
+
+          if (DRY_RUN) {
+            console.log(`[SLASH-DRY] Would call slashForDowntimeWithProof for ${nodeAddr} (offline ~${hoursOffline.toFixed(2)}h)`);
+            continue;
+          }
+
+          try {
+            const gasLimitRaw = process.env.SLASH_GAS_LIMIT;
+            const gasLimitParsed = gasLimitRaw != null ? Number(gasLimitRaw) : NaN;
+            const gasOverride = (Number.isFinite(gasLimitParsed) && gasLimitParsed > 0)
+              ? { gasLimit: BigInt(Math.floor(gasLimitParsed)) }
+              : {};
+
+            const tx = await this.staking.slashForDowntimeWithProof(
+              nodeAddr,
+              tsArg,
+              hb.signature,
+              gasOverride
+            );
+            console.log(`[SLASH] Submitted slashForDowntimeWithProof for ${nodeAddr} (tx: ${tx.hash})`);
+            await tx.wait();
+            console.log(`[SLASH] SlashForDowntimeWithProof confirmed for ${nodeAddr}`);
+          } catch (e) {
+            const msg = e && e.message ? e.message : String(e);
+            console.warn(`[SLASH] Failed to slash ${nodeAddr}:`, msg);
+          }
+        }
+      } catch (e) {
+        const msg = e && e.message ? e.message : String(e);
+        console.warn('[SLASH] Slashing loop error:', msg);
+      }
+    };
+
+    this._slashingTimer = setInterval(tick, loopMs);
+    setTimeout(tick, 30_000);
+  }
+
 
 
   async monitorNetwork() {
