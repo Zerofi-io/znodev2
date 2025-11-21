@@ -1920,27 +1920,12 @@ class ZNode {
         offset += maxScan;
       }
 
-      let onlineCount = 0;
-      if (this.staking && eligible.length > 0) {
-        for (const addr of eligible) {
-          try {
-            const info = await this.staking.getNodeInfo(addr);
-            if (!Array.isArray(info) || info.length < 7) {
-              continue;
-            }
-            const active = info[3];
-            const hoursOffline = info[6];
-            if (active && hoursOffline === 0n) {
-              onlineCount++;
-            }
-          } catch {
-            // ignore staking read errors per-address
-          }
-        }
-      }
-
+      // On-chain liveness is now driven by signed heartbeats and decentralized slashing
+      // rather than continuous on-chain heartbeats. We no longer attempt to infer real-time
+      // online status from staking state here; instead, treat on-chain liveness as 0 and
+      // rely on the P2P metric below for actual online counts.
       if (eligible.length > 0) {
-        console.log('Online Members in Queue (on-chain): ' + onlineCount + '/' + eligible.length);
+        console.log('Online Members in Queue (on-chain): 0/' + eligible.length);
       } else {
         console.log('Online Members in Queue (on-chain): 0/0');
       }
