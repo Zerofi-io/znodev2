@@ -1006,12 +1006,12 @@ class LibP2PExchange {
     const startTime = Date.now();
     const expected = clusterNodes.length;
     const membersLower = clusterNodes.map(addr => addr.toLowerCase());
-    
-    console.log(`[P2P] Waiting for R${round} completion (0/${expected})...`);
-    
-    while (Date.now() - startTime < timeoutMs) {
+
+    const noTimeout = !Number.isFinite(timeoutMs) || timeoutMs <= 0;
+    console.log(`[P2P] Waiting for R${round} completion (0/${expected})... timeoutMs=${noTimeout ? 'infinite' : timeoutMs}`);
+
+    const getMemberCount = () => {
       const collected = this.roundData.get(key);
-      
       let memberCount = 0;
       if (collected) {
         for (const addr of membersLower) {
@@ -1020,30 +1020,29 @@ class LibP2PExchange {
           }
         }
       }
-      
+      return memberCount;
+    };
+
+    while (true) {
+      const elapsed = Date.now() - startTime;
+      const memberCount = getMemberCount();
+
       if (memberCount >= expected) {
         console.log(`[P2P] Round ${round} complete: ${memberCount}/${expected} nodes`);
         return true;
       }
-      
-      if (memberCount > 0 && (Date.now() - startTime) % 10000 < 1000) {
+
+      if (!noTimeout && elapsed >= timeoutMs) {
+        console.log(`[P2P] Round ${round} timeout: ${memberCount}/${expected} nodes`);
+        return false;
+      }
+
+      if (memberCount > 0 && (elapsed % 10000) < 1000) {
         console.log(`[P2P] Round ${round} progress: ${memberCount}/${expected} nodes`);
       }
-      
+
       await new Promise(r => setTimeout(r, 2000));
     }
-    
-    const collected = this.roundData.get(key);
-    let memberCount = 0;
-    if (collected) {
-      for (const addr of membersLower) {
-        if (collected.has(addr)) {
-          memberCount++;
-        }
-      }
-    }
-    console.log(`[P2P] Round ${round} timeout: ${memberCount}/${expected} nodes`);
-    return false;
   }
 
   getPeerPayloads(clusterId, round, clusterNodes) {
