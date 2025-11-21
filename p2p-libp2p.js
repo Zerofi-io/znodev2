@@ -419,7 +419,7 @@ class LibP2PExchange {
     const peers = this.node.services.pubsub.getSubscribers(topic);
     console.log(`[P2P] Connected to ${peers.length} peers on cluster topic`);
     
-    const requireE2E = process.env.P2P_REQUIRE_E2E === '1';
+    const requireE2E = false; // E2E disabled for cluster identities/liveness (plaintext allowed)
     const maxRetries = Number(process.env.P2P_IDENTITY_RETRIES || 3);
     const retryDelayMs = Number(process.env.P2P_IDENTITY_RETRY_DELAY_MS || 5000);
     
@@ -566,7 +566,7 @@ class LibP2PExchange {
       return;
     }
 
-    const requireE2E = process.env.P2P_REQUIRE_E2E === '1';
+    const requireE2E = false; // E2E disabled for cluster identities/liveness (plaintext allowed)
     
     if (requireE2E) {
       if (payload && encrypted) {
@@ -879,7 +879,7 @@ class LibP2PExchange {
     const signature = this.signPayload(clusterId, payload, round, nonce, timestamp);
     
     const clusterMembers = this.clusterMembers.get(clusterId);
-    const requireE2E = process.env.P2P_REQUIRE_E2E === '1';
+    const requireE2E = false; // E2E disabled for cluster identities/liveness (plaintext allowed)
     
     let fullE2EReady = false;
     if (clusterMembers && clusterMembers.size > 1) {
