@@ -2013,7 +2013,7 @@ class ZNode {
           return;
         }
 
-        const LIVENESS_ROUND = -99;
+        const LIVENESS_ROUND = 9999;
         const liveKeyInitial = `${clusterId}_${LIVENESS_ROUND}`;
         try {
           if (this.p2p.roundData && this.p2p.roundData.has(liveKeyInitial)) {
