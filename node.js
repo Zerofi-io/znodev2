@@ -1735,6 +1735,30 @@ class ZNode {
           return null;
         }
 
+        // Filter candidates by P2P heartbeat recency
+        if (this.p2p && typeof this.p2p.getHeartbeats === 'function') {
+          try {
+            const ttlRaw = process.env.HEARTBEAT_ONLINE_TTL_MS;
+            const ttlParsed = ttlRaw != null ? Number(ttlRaw) : NaN;
+            const ttlMs = (Number.isFinite(ttlParsed) && ttlParsed > 0) ? ttlParsed : 1800000; // default 30min
+            const hbMap = this.p2p.getHeartbeats(ttlMs);
+            const p2pLive = new Set([this.wallet.address.toLowerCase()]);
+            for (const [addr, rec] of hbMap.entries()) {
+              if (rec && rec.timestamp != null) {
+                p2pLive.add(addr.toLowerCase());
+              }
+            }
+            const p2pFiltered = candidates.filter(a => p2pLive.has(a.toLowerCase()));
+            if (p2pFiltered.length < clusterSize) {
+              return null; // Not enough P2P-live nodes for a cluster
+            }
+            candidates = p2pFiltered;
+          } catch {
+            // P2P filter failed, proceed with all canParticipate candidates
+          }
+        }
+
+
         // Epoch-based randomized selection: shuffle candidates deterministically per epoch
         let epochSeed = ethers.ZeroHash;
         try {
