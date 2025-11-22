@@ -1770,8 +1770,13 @@ class ZNode {
           return null;
         }
 
-        // Filter candidates by P2P heartbeat recency
-        if (this.p2p && typeof this.p2p.getHeartbeats === 'function') {
+        // Optional: filter candidates by P2P heartbeat recency.
+        // Disabled by default because inconsistent heartbeat visibility across nodes
+        // can cause them to compute different candidate clusters. When enabled via
+        // ENABLE_P2P_HEARTBEAT_CLUSTER_FILTER=1, we only *prefer* P2P-live nodes but
+        // never drop below clusterSize; otherwise we fall back to on-chain candidates.
+        const useP2PFilter = process.env.ENABLE_P2P_HEARTBEAT_CLUSTER_FILTER === '1';
+        if (useP2PFilter && this.p2p && typeof this.p2p.getHeartbeats === 'function') {
           try {
             const ttlRaw = process.env.HEARTBEAT_ONLINE_TTL_MS;
             const ttlParsed = ttlRaw != null ? Number(ttlRaw) : NaN;
@@ -1783,11 +1788,11 @@ class ZNode {
                 p2pLive.add(addr.toLowerCase());
               }
             }
+
             const p2pFiltered = candidates.filter(a => p2pLive.has(a.toLowerCase()));
-            if (p2pFiltered.length < clusterSize) {
-              return null; // Not enough P2P-live nodes for a cluster
+            if (p2pFiltered.length >= clusterSize) {
+              candidates = p2pFiltered;
             }
-            candidates = p2pFiltered;
           } catch {
             // P2P filter failed, proceed with all canParticipate candidates
           }
