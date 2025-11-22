@@ -862,6 +862,15 @@ class ZNode {
     try {
       console.log('→ Initializing P2P for cluster...');
       await this.p2p.connectToCluster(clusterId, clusterNodes, this.registry);
+      // Register Round 0 responder hook so this node can serve direct R0 requests
+      if (this.p2p) {
+        this.p2p.round0Responder = async (cid) => {
+          if (!this.multisigInfo) {
+            await this.prepareMultisig();
+          }
+          return this.multisigInfo;
+        };
+      }
       // Give peers time to connect
       await new Promise(r => setTimeout(r, 3000));
       console.log('✓ P2P cluster initialized');
@@ -1023,7 +1032,7 @@ class ZNode {
         await this.prepareMultisig();
       }
 
-      // Round 0: exchange prepare_multisig payloads via P2P (with retries)
+      // Round 0: coordinator pulls prepare_multisig payloads via direct P2P streams (with retries)
       const round0MaxAttemptsRaw = process.env.ROUND0_MAX_ATTEMPTS;
       const round0MaxAttemptsParsed = round0MaxAttemptsRaw != null ? Number(round0MaxAttemptsRaw) : NaN;
       const round0MaxAttempts = (Number.isFinite(round0MaxAttemptsParsed) && round0MaxAttemptsParsed > 0) ? round0MaxAttemptsParsed : 3;
@@ -1037,24 +1046,49 @@ class ZNode {
       let complete0 = false;
 
       for (let attempt = 1; attempt <= round0MaxAttempts && !complete0; attempt++) {
+        console.log('\n→ Round 0: exchanging prepare_multisig info via direct P2P streams (attempt ' + attempt + '/' + round0MaxAttempts + ')...');
+
+        const collected = [];
+
+        if (!isCoordinator) {
+          // Non-coordinators rely on responder hook to serve coordinator; they do not drive R0.
+          console.log('  (non-coordinator) Waiting for coordinator-driven Round 0; skipping direct requests');
+          complete0 = true;
+          peers = [];
+          break;
+        }
+
         try {
-          const r0Key = `${clusterId}_0`;
-          if (this.p2p.roundData && this.p2p.roundData.has(r0Key)) {
-            this.p2p.roundData.delete(r0Key);
+          const peerIdMap = await this.p2p.discoverClusterPeerIds(members, clusterId);
+          const tasks = [];
+          for (const addr of members) {
+            if (!addr) continue;
+            const lower = addr.toLowerCase();
+            if (lower === this.wallet.address.toLowerCase()) continue;
+            const binding = peerIdMap.get(lower);
+            if (!binding) continue;
+
+            tasks.push((async () => {
+              try {
+                const info = await this.p2p.requestRound0(binding, clusterId, roundTimeoutPrepare);
+                if (info && typeof info === 'string' && info.length > 0) {
+                  collected.push(info);
+                }
+              } catch (e) {
+                console.log('  ⚠️ Round 0 request failed for ' + lower + ': ' + (e.message || String(e)));
+              }
+            })());
           }
-          if (this.p2p.myData && this.p2p.myData.has(r0Key)) {
-            this.p2p.myData.delete(r0Key);
-          }
-        } catch {}
 
-        console.log('\n→ Round 0: exchanging prepare_multisig info via P2P (attempt ' + attempt + '/' + round0MaxAttempts + ')...');
-        await this.p2p.broadcastRoundData(clusterId, 0, this.multisigInfo);
-        const ok = await this.p2p.waitForRoundCompletion(clusterId, 0, members, roundTimeoutPrepare);
+          await Promise.allSettled(tasks);
+        } catch (e) {
+          console.log('  ⚠️ Round 0 direct exchange failed on attempt ' + attempt + ':', e.message || String(e));
+        }
 
-        peers = this.p2p.getPeerPayloads(clusterId, 0, members);
-        const peerCount = Array.isArray(peers) ? peers.length : 0;
+        const peerCount = collected.length;
+        peers = collected;
 
-        if (ok && peerCount >= expectedPeerCount) {
+        if (peerCount >= expectedPeerCount) {
           complete0 = true;
           break;
         }

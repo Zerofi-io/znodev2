@@ -2199,6 +2199,142 @@ class LibP2PExchange {
     return peerIdMap;
   }
 
+  // ========== Round 0 Direct Stream Protocol (Coordinator-Driven) ==========
+  async registerRound0Protocol() {
+    await this.node.handle('/znode/round0/1.0.0', async ({ stream, connection }) => {
+      await this.handleRound0Stream(stream, connection.remotePeer).catch(err => {
+        console.log('[P2P] Round0 stream handler error:', err.message);
+      });
+    });
+    console.log('[P2P] Registered /znode/round0/1.0.0 protocol handler');
+  }
+
+  async handleRound0Stream(stream, remotePeerId) {
+    try {
+      const chunks = [];
+      let lenBuf = null;
+      let messageLength = 0;
+      let bytesReceived = 0;
+
+      for await (const chunk of stream.source) {
+        if (!lenBuf) {
+          if (chunk.length < 4) {
+            throw new Error('Invalid Round0 stream: first chunk too small');
+          }
+          lenBuf = chunk.slice(0, 4);
+          messageLength = lenBuf.readUInt32BE(0);
+          if (messageLength > 1024 * 1024) {
+            throw new Error('Round0 message too large');
+          }
+          if (chunk.length > 4) {
+            chunks.push(chunk.slice(4));
+            bytesReceived = chunk.length - 4;
+          }
+        } else {
+          chunks.push(chunk);
+          bytesReceived += chunk.length;
+        }
+        if (bytesReceived >= messageLength) break;
+      }
+
+      const msgBuf = Buffer.concat(chunks).slice(0, messageLength);
+      const req = JSON.parse(msgBuf.toString('utf8'));
+      const { clusterId, sender } = req || {};
+
+      if (!clusterId || !sender) {
+        throw new Error('Invalid Round0 request: missing clusterId or sender');
+      }
+
+      const allowedMembers = this.clusterMembers.get(clusterId);
+      if (allowedMembers && !allowedMembers.has(this.ethereumAddress.toLowerCase())) {
+        throw new Error('This node is not a member of requested cluster');
+      }
+
+      if (!this.round0Responder) {
+        throw new Error('Round0 responder hook not set');
+      }
+
+      const multisigInfo = await this.round0Responder(clusterId);
+      if (!multisigInfo || typeof multisigInfo !== 'string' || multisigInfo.length === 0) {
+        throw new Error('Empty Round0 multisigInfo');
+      }
+
+      const resp = { status: 'ok', multisigInfo };
+      const respBuf = Buffer.from(JSON.stringify(resp), 'utf8');
+      const respLen = Buffer.allocUnsafe(4);
+      respLen.writeUInt32BE(respBuf.length, 0);
+      await pipe([respLen, respBuf], stream.sink);
+    } catch (err) {
+      try {
+        const resp = { status: 'error', reason: err.message || String(err) };
+        const respBuf = Buffer.from(JSON.stringify(resp), 'utf8');
+        const respLen = Buffer.allocUnsafe(4);
+        respLen.writeUInt32BE(respBuf.length, 0);
+        await pipe([respLen, respBuf], stream.sink);
+      } catch {}
+      console.log('[P2P] Round0 handler error:', err.message || String(err));
+    }
+  }
+
+  async requestRound0(peerId, clusterId, timeoutMs = 300000) {
+    const stream = await this.node.dialProtocol(peerId, '/znode/round0/1.0.0');
+
+    const req = {
+      type: 'round0_request',
+      clusterId,
+      sender: this.ethereumAddress,
+      nonce: ethers.hexlify(crypto.randomBytes(16)),
+      timestamp: Date.now()
+    };
+    const reqBuf = Buffer.from(JSON.stringify(req), 'utf8');
+    const lenBuf = Buffer.allocUnsafe(4);
+    lenBuf.writeUInt32BE(reqBuf.length, 0);
+    await pipe([lenBuf, reqBuf], stream.sink);
+
+    const readResp = async () => {
+      const chunks = [];
+      let lenBuf = null;
+      let respLength = 0;
+      let bytesReceived = 0;
+
+      for await (const chunk of stream.source) {
+        if (!lenBuf) {
+          if (chunk.length < 4) {
+            throw new Error('Invalid Round0 resp: first chunk too small');
+          }
+          lenBuf = chunk.slice(0, 4);
+          respLength = lenBuf.readUInt32BE(0);
+          if (respLength > 1024 * 1024) {
+            throw new Error('Round0 response too large');
+          }
+          if (chunk.length > 4) {
+            chunks.push(chunk.slice(4));
+            bytesReceived = chunk.length - 4;
+          }
+        } else {
+          chunks.push(chunk);
+          bytesReceived += chunk.length;
+        }
+        if (bytesReceived >= respLength) break;
+      }
+
+      const respBuf = Buffer.concat(chunks).slice(0, respLength);
+      return JSON.parse(respBuf.toString('utf8'));
+    };
+
+    const timeoutPromise = new Promise((_, reject) => {
+      const ms = Number(timeoutMs) > 0 ? Number(timeoutMs) : 300000;
+      setTimeout(() => reject(new Error('Round0 response timeout')), ms);
+    });
+
+    const resp = await Promise.race([readResp(), timeoutPromise]);
+    if (!resp || resp.status !== 'ok' || !resp.multisigInfo) {
+      throw new Error(`Round0 error: ${resp && resp.reason ? resp.reason : 'invalid response'}`);
+    }
+
+    return resp.multisigInfo;
+  }
+
 
 }
 
