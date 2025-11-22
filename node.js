@@ -839,9 +839,6 @@ class ZNode {
   async startP2P() {
     console.log('→ Starting P2P network...');
     
-    if (process.env.TEST_MODE !== '1' && process.env.P2P_REQUIRE_E2E !== '1') {
-      throw new Error('P2P_REQUIRE_E2E=1 is required in production mode (TEST_MODE=0). Set it in your .env file to enable end-to-end encryption.');
-    }
     
     try {
       const p2pPort = Number(process.env.P2P_PORT || 0); // 0 = random port
