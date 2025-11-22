@@ -414,10 +414,28 @@ class LibP2PExchange {
       console.log(`[P2P] Subscribed to topic: ${topic} (${membersLower.length} members)`);
     }
 
-    await new Promise(r => setTimeout(r, 8000));
+    // Wait for all other cluster members to subscribe
+    const expectedPeers = membersLower.length - 1; // Exclude self
+    const maxWaitMs = Number(process.env.P2P_CLUSTER_WAIT_MS || 60000);
+    const startWait = Date.now();
+    let peerCount = 0;
     
-    const peers = this.node.services.pubsub.getSubscribers(topic);
-    console.log(`[P2P] Connected to ${peers.length} peers on cluster topic`);
+    while (Date.now() - startWait < maxWaitMs) {
+      const peers = this.node.services.pubsub.getSubscribers(topic);
+      peerCount = peers.length;
+      if (peerCount >= expectedPeers) {
+        console.log(`[P2P] All ${peerCount} peers connected to cluster topic`);
+        break;
+      }
+      if (peerCount > 0) {
+        console.log(`[P2P] Waiting for peers: ${peerCount}/${expectedPeers} connected`);
+      }
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    
+    if (peerCount < expectedPeers) {
+      console.log(`[P2P] Warning: Only ${peerCount}/${expectedPeers} peers connected after ${maxWaitMs}ms`);
+    }
     
     const requireE2E = false; // E2E disabled for cluster identities/liveness (plaintext allowed)
     const maxRetries = Number(process.env.P2P_IDENTITY_RETRIES || 3);
