@@ -2027,7 +2027,14 @@ class LibP2PExchange {
   }
 
   async sendIdentityDirect(peerId, clusterId) {
+    let targetPeerId = peerId;
     try {
+      // Normalize PeerId: bindings store strings but libp2p expects PeerId objects
+      if (typeof targetPeerId === 'string') {
+        const { peerIdFromString } = await import('@libp2p/peer-id');
+        targetPeerId = peerIdFromString(targetPeerId);
+      }
+
       // Construct identity message (reuse logic from broadcastIdentity)
       const signingKey = new ethers.SigningKey(this.ethereumPrivateKey);
       const publicKey = '0x' + signingKey.publicKey.slice(2);
@@ -2087,7 +2094,7 @@ class LibP2PExchange {
       };
 
       // Open stream and send
-      const stream = await this.node.dialProtocol(peerId, '/znode/identity/1.0.0');
+      const stream = await this.node.dialProtocol(targetPeerId, '/znode/identity/1.0.0');
       
       const msgBuf = Buffer.from(JSON.stringify(message), 'utf8');
       const lenBuf = Buffer.allocUnsafe(4);
@@ -2141,7 +2148,8 @@ class LibP2PExchange {
         throw new Error(`Identity rejected: ${ack.reason || 'unknown'}`);
       }
 
-      console.log(`[P2P] Identity sent to ${peerId.toString().slice(0, 20)}...`);
+      const idStr = targetPeerId && targetPeerId.toString ? targetPeerId.toString() : String(targetPeerId);
+      console.log(`[P2P] Identity sent to ${idStr.slice(0, 20)}...`);
       
       // Store own identity
       this.peerPublicKeys.set(this.ethereumAddress.toLowerCase(), { 
@@ -2152,9 +2160,11 @@ class LibP2PExchange {
 
       return true;
     } catch (err) {
-      console.log(`[P2P] Identity send failed to ${peerId.toString().slice(0, 20)}...: ${err.message}`);
+      const idStr = targetPeerId && targetPeerId.toString ? targetPeerId.toString() : String(targetPeerId || 'unknown');
+      console.log(`[P2P] Identity send failed to ${idStr.slice(0, 20)}...: ${err.message}`);
       return false;
     }
+
   }
 
   async discoverClusterPeerIds(clusterNodes, clusterId) {
@@ -2281,7 +2291,13 @@ class LibP2PExchange {
   }
 
   async requestRound0(peerId, clusterId, timeoutMs = 300000) {
-    const stream = await this.node.dialProtocol(peerId, '/znode/round0/1.0.0');
+    let targetPeerId = peerId;
+    if (typeof targetPeerId === 'string') {
+      const { peerIdFromString } = await import('@libp2p/peer-id');
+      targetPeerId = peerIdFromString(targetPeerId);
+    }
+
+    const stream = await this.node.dialProtocol(targetPeerId, '/znode/round0/1.0.0');
 
     const req = {
       type: 'round0_request',
