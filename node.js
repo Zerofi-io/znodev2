@@ -2059,15 +2059,8 @@ class ZNode {
         const sortedMembersLower = [...membersLower].sort();
         let coordinatorIndex = 0;
         try {
-          const blockNumber = await this.provider.getBlockNumber();
-          const rawSpan = process.env.SELECTION_EPOCH_BLOCKS;
-          const parsedSpan = rawSpan != null ? Number(rawSpan) : NaN;
-          const epochSpan = (Number.isFinite(parsedSpan) && parsedSpan > 0) ? parsedSpan : 20;
-          const bn = typeof blockNumber === 'bigint' ? blockNumber : BigInt(blockNumber);
-          const spanBig = BigInt(epochSpan);
-          const epochBig = spanBig > 0n ? bn / spanBig : 0n;
           const seed = ethers.keccak256(
-            ethers.solidityPacked(['bytes32', 'uint256'], [clusterId, epochBig])
+            ethers.solidityPacked(['bytes32'], [clusterId])
           );
           const seedBig = BigInt(seed);
           coordinatorIndex = Number(seedBig % BigInt(sortedMembersLower.length));
