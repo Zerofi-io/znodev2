@@ -1508,7 +1508,7 @@ class ZNode {
 
 
   startHeartbeatLoop() {
-    const intervalSec = Number(process.env.HEARTBEAT_INTERVAL || 900);
+    const intervalSec = Number(process.env.HEARTBEAT_INTERVAL || 300);
     if (this._heartbeatTimer) return;
     
     this._heartbeatFailures = 0;
