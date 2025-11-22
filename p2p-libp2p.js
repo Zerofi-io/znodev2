@@ -13,6 +13,7 @@ import { ping } from '@libp2p/ping';
 import { bootstrap } from '@libp2p/bootstrap';
 import { mdns } from '@libp2p/mdns';
 import { identify } from '@libp2p/identify';
+import { pipe } from 'it-pipe';
 import { multiaddr } from '@multiformats/multiaddr';
 import { ethers } from 'ethers';
 import { createEd25519PeerId } from '@libp2p/peer-id-factory';
@@ -224,6 +225,9 @@ class LibP2PExchange {
       this.handleMessage(evt.detail);
     });
 
+
+    // Register direct identity exchange protocol
+    await this.registerIdentityProtocol();
     return;
   }
 
@@ -472,43 +476,66 @@ class LibP2PExchange {
       console.log(`[P2P] Warning: Only ${peerCount}/${expectedPeers} peers connected after ${maxWaitMs}ms`);
     }
     
-    const requireE2E = false; // E2E disabled for cluster identities/liveness (plaintext allowed)
-    const maxRetries = Number(process.env.P2P_IDENTITY_RETRIES || 3);
-    const retryDelayMs = Number(process.env.P2P_IDENTITY_RETRY_DELAY_MS || 5000);
+    // Direct stream identity exchange (with gossipsub fallback)
+    console.log('[P2P] Starting direct identity exchange...');
     
-    let identitiesReceived = false;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      await this.broadcastIdentity(clusterId);
-      identitiesReceived = await this.waitForIdentities(clusterId, clusterNodes);
-      
-      if (identitiesReceived) {
-        console.log('[P2P] E2E encryption enabled for cluster');
-        break;
-      }
-      
-      if (attempt < maxRetries) {
-        console.log(`[P2P] Identity collection incomplete, retrying (${attempt}/${maxRetries})...`);
-        await new Promise(r => setTimeout(r, retryDelayMs));
+    // Discover peer IDs for cluster members
+    const peerIdMap = await this.discoverClusterPeerIds(clusterNodes, clusterId);
+    
+    // Send identities directly via streams in parallel
+    const sendPromises = [];
+    for (const [addr, peerId] of peerIdMap.entries()) {
+      if (addr === this.ethereumAddress.toLowerCase()) continue; // skip self
+      sendPromises.push(
+        this.sendIdentityDirect(peerId, clusterId).catch(err => {
+          console.log(`[P2P] Direct send to ${addr.slice(0,8)} failed, will use gossipsub fallback`);
+          return false;
+        })
+      );
+    }
+    
+    // Wait for all sends to complete
+    await Promise.allSettled(sendPromises);
+    
+    // Also broadcast via gossipsub as fallback for any failed direct sends
+    await this.broadcastIdentity(clusterId);
+    
+    // Brief wait for identities to arrive (direct should be <2s, gossipsub fallback may take longer)
+    await new Promise(r => setTimeout(r, 5000));
+    
+    // Check completeness
+    let receivedCount = 0;
+    for (const addr of membersLower) {
+      if (this.peerPublicKeys.has(addr)) {
+        receivedCount++;
       }
     }
     
-    if (!identitiesReceived) {
-      let receivedCount = 0;
-      for (const addr of membersLower) {
-        if (this.peerPublicKeys.has(addr)) {
-          receivedCount++;
+    if (receivedCount >= membersLower.length) {
+      console.log(`[P2P] Identities complete: ${receivedCount}/${membersLower.length} nodes (direct exchange)`);
+    } else {
+      console.log(`[P2P] Partial identities: ${receivedCount}/${membersLower.length} nodes after direct exchange`);
+      
+      // If still incomplete, try gossipsub retry
+      const maxRetries = Number(process.env.P2P_IDENTITY_RETRIES || 2);
+      for (let attempt = 1; attempt <= maxRetries && receivedCount < membersLower.length; attempt++) {
+        console.log(`[P2P] Retrying via gossipsub (${attempt}/${maxRetries})...`);
+        await this.broadcastIdentity(clusterId);
+        await new Promise(r => setTimeout(r, 8000));
+        
+        receivedCount = 0;
+        for (const addr of membersLower) {
+          if (this.peerPublicKeys.has(addr)) receivedCount++;
+        }
+        
+        if (receivedCount >= membersLower.length) {
+          console.log(`[P2P] Identities complete: ${receivedCount}/${membersLower.length} nodes (after retry)`);
+          break;
         }
       }
-      console.log(`[P2P] Warning: Partial identity collection (${receivedCount}/${membersLower.length} nodes)`);
       
-      if (requireE2E) {
-        const livenessQuorum = Number(process.env.LIVENESS_QUORUM || 0);
-        const defaultMinIdentities = livenessQuorum > 0 ? livenessQuorum : membersLower.length;
-        const minIdentities = Number(process.env.P2P_MIN_IDENTITIES || defaultMinIdentities);
-        if (receivedCount < minIdentities) {
-          throw new Error(`P2P_REQUIRE_E2E=1 but only ${receivedCount}/${minIdentities} peer identities received`);
-        }
-        console.log(`[P2P] Proceeding with partial E2E encryption (${receivedCount}/${membersLower.length} nodes)`);
+      if (receivedCount < membersLower.length) {
+        console.log(`[P2P] Warning: Partial identity collection (${receivedCount}/${membersLower.length} nodes)`);
       }
     }
     
@@ -1905,6 +1932,260 @@ class LibP2PExchange {
       console.log('[P2P] LibP2P node stopped');
     }
   }
+  // ========== Direct Identity Stream Protocol ==========
+  // Register protocol handler after node starts (call from start())
+  async registerIdentityProtocol() {
+    await this.node.handle('/znode/identity/1.0.0', async ({ stream, connection }) => {
+      await this.handleIdentityStream(stream, connection.remotePeer).catch(err => {
+        console.log('[P2P] Identity stream handler error:', err.message);
+      });
+    });
+    console.log('[P2P] Registered /znode/identity/1.0.0 protocol handler');
+  }
+
+  async handleIdentityStream(stream, remotePeerId) {
+    try {
+      // Read length-prefixed message
+      const chunks = [];
+      let lenBuf = null;
+      let messageLength = 0;
+      let bytesReceived = 0;
+
+      for await (const chunk of stream.source) {
+        if (!lenBuf) {
+          // First 4 bytes are the length prefix
+          if (chunk.length < 4) {
+            throw new Error('Invalid stream: first chunk too small');
+          }
+          lenBuf = chunk.slice(0, 4);
+          messageLength = lenBuf.readUInt32BE(0);
+          if (messageLength > 1024 * 1024) { // 1MB max
+            throw new Error(`Message too large: ${messageLength} bytes`);
+          }
+          // Rest of first chunk is message data
+          if (chunk.length > 4) {
+            chunks.push(chunk.slice(4));
+            bytesReceived = chunk.length - 4;
+          }
+        } else {
+          chunks.push(chunk);
+          bytesReceived += chunk.length;
+        }
+
+        if (bytesReceived >= messageLength) {
+          break;
+        }
+      }
+
+      const msgBuf = Buffer.concat(chunks).slice(0, messageLength);
+      const data = JSON.parse(msgBuf.toString('utf8'));
+
+      // Validate using existing handler
+      this.handleIdentityMessage(data, remotePeerId.toString());
+
+      // Send ACK
+      const ack = { status: 'ok' };
+      const ackBuf = Buffer.from(JSON.stringify(ack), 'utf8');
+      const ackLenBuf = Buffer.allocUnsafe(4);
+      ackLenBuf.writeUInt32BE(ackBuf.length, 0);
+
+      await pipe(
+        [ackLenBuf, ackBuf],
+        stream.sink
+      );
+    } catch (err) {
+      // Send error ACK
+      try {
+        const ack = { status: 'error', reason: err.message };
+        const ackBuf = Buffer.from(JSON.stringify(ack), 'utf8');
+        const ackLenBuf = Buffer.allocUnsafe(4);
+        ackLenBuf.writeUInt32BE(ackBuf.length, 0);
+        await pipe([ackLenBuf, ackBuf], stream.sink);
+      } catch (e) {
+        // Failed to send error, stream likely closed
+      }
+      throw err;
+    }
+  }
+
+  async sendIdentityDirect(peerId, clusterId) {
+    try {
+      // Construct identity message (reuse logic from broadcastIdentity)
+      const signingKey = new ethers.SigningKey(this.ethereumPrivateKey);
+      const publicKey = '0x' + signingKey.publicKey.slice(2);
+      
+      const nonce = ethers.hexlify(crypto.randomBytes(32));
+      const timestamp = Date.now();
+      const myPeerId = this.node.peerId.toString();
+      const topic = `/znode/cluster/${clusterId}`;
+      
+      const chainIdStr = process.env.CHAIN_ID || '11155111';
+      const chainId = Number(chainIdStr);
+      if (isNaN(chainId) || chainId < 1 || chainId > Number.MAX_SAFE_INTEGER) {
+        throw new Error(`Invalid CHAIN_ID: ${chainIdStr}`);
+      }
+      
+      const domain = {
+        name: 'ZNode',
+        version: '1',
+        chainId: chainId
+      };
+      
+      const types = {
+        Identity: [
+          { name: 'messageType', type: 'string' },
+          { name: 'clusterId', type: 'bytes32' },
+          { name: 'peerId', type: 'string' },
+          { name: 'topic', type: 'string' },
+          { name: 'publicKey', type: 'string' },
+          { name: 'nonce', type: 'bytes32' },
+          { name: 'timestamp', type: 'uint256' }
+        ]
+      };
+      
+      const value = {
+        messageType: 'p2p_identity',
+        clusterId: clusterId,
+        peerId: myPeerId,
+        topic: topic,
+        publicKey: publicKey,
+        nonce: nonce,
+        timestamp: timestamp
+      };
+      
+      const digest = ethers.TypedDataEncoder.hash(domain, types, value);
+      const signature = signingKey.sign(digest).serialized;
+      
+      const message = {
+        type: 'p2p/identity',
+        clusterId,
+        address: this.ethereumAddress,
+        peerId: myPeerId,
+        topic,
+        publicKey,
+        nonce,
+        timestamp,
+        signature
+      };
+
+      // Open stream and send
+      const stream = await this.node.dialProtocol(peerId, '/znode/identity/1.0.0');
+      
+      const msgBuf = Buffer.from(JSON.stringify(message), 'utf8');
+      const lenBuf = Buffer.allocUnsafe(4);
+      lenBuf.writeUInt32BE(msgBuf.length, 0);
+
+      await pipe(
+        [lenBuf, msgBuf],
+        stream.sink
+      );
+
+      // Read ACK with timeout
+      const ackTimeout = 5000;
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('ACK timeout')), ackTimeout)
+      );
+
+      const readAck = async () => {
+        const chunks = [];
+        let lenBuf = null;
+        let ackLength = 0;
+        let bytesReceived = 0;
+
+        for await (const chunk of stream.source) {
+          if (!lenBuf) {
+            if (chunk.length < 4) {
+              throw new Error('Invalid ACK: first chunk too small');
+            }
+            lenBuf = chunk.slice(0, 4);
+            ackLength = lenBuf.readUInt32BE(0);
+            if (chunk.length > 4) {
+              chunks.push(chunk.slice(4));
+              bytesReceived = chunk.length - 4;
+            }
+          } else {
+            chunks.push(chunk);
+            bytesReceived += chunk.length;
+          }
+
+          if (bytesReceived >= ackLength) {
+            break;
+          }
+        }
+
+        const ackBuf = Buffer.concat(chunks).slice(0, ackLength);
+        return JSON.parse(ackBuf.toString('utf8'));
+      };
+
+      const ack = await Promise.race([readAck(), timeoutPromise]);
+
+      if (ack.status !== 'ok') {
+        throw new Error(`Identity rejected: ${ack.reason || 'unknown'}`);
+      }
+
+      console.log(`[P2P] Identity sent to ${peerId.toString().slice(0, 20)}...`);
+      
+      // Store own identity
+      this.peerPublicKeys.set(this.ethereumAddress.toLowerCase(), { 
+        publicKey, 
+        peerId: myPeerId, 
+        lastSeen: Date.now() 
+      });
+
+      return true;
+    } catch (err) {
+      console.log(`[P2P] Identity send failed to ${peerId.toString().slice(0, 20)}...: ${err.message}`);
+      return false;
+    }
+  }
+
+  async discoverClusterPeerIds(clusterNodes, clusterId) {
+    const membersLower = clusterNodes.map(addr => addr.toLowerCase());
+    const peerIdMap = new Map(); // ethereumAddr -> peerId
+    const topic = `/znode/cluster/${clusterId}`;
+
+    // First pass: use existing peerIdBindings from previous identity exchanges
+    for (const addr of membersLower) {
+      const binding = this.peerIdBindings.get(addr);
+      if (binding && binding.peerId) {
+        peerIdMap.set(addr, binding.peerId);
+      }
+    }
+
+    console.log(`[P2P] Initial peer ID mapping: ${peerIdMap.size}/${membersLower.length} from bindings`);
+
+    // Second pass: check pubsub subscribers
+    const subscribers = this.node.services.pubsub.getSubscribers(topic);
+    console.log(`[P2P] Pubsub subscribers on ${topic}: ${subscribers.length}`);
+
+    // Wait briefly for more peers to join if needed
+    const maxWaitMs = 10000; // 10 seconds
+    const startTime = Date.now();
+    
+    while (peerIdMap.size < membersLower.length - 1 && Date.now() - startTime < maxWaitMs) {
+      const currentSubs = this.node.services.pubsub.getSubscribers(topic);
+      
+      // Try to match subscribers with known addresses via peerIdBindings
+      for (const addr of membersLower) {
+        if (peerIdMap.has(addr)) continue;
+        const binding = this.peerIdBindings.get(addr);
+        if (binding && binding.peerId) {
+          peerIdMap.set(addr, binding.peerId);
+        }
+      }
+
+      if (peerIdMap.size >= membersLower.length - 1) {
+        break;
+      }
+
+      await new Promise(r => setTimeout(r, 1000));
+    }
+
+    console.log(`[P2P] Final peer ID mapping: ${peerIdMap.size}/${membersLower.length - 1} peers (excluding self)`);
+    return peerIdMap;
+  }
+
+
 }
 
 export default LibP2PExchange;
