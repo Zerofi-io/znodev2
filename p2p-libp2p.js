@@ -48,6 +48,7 @@ class LibP2PExchange {
     this.peerPublicKeys = new Map();
     this.peerIdBindings = new Map();
     this.queuePresence = new Map();
+    this.knownQueuePeers = new Set(); // Track peers we've already seen
     this.queuePresenceInterval = null;
     this.sweepProposals = new Map();
     this.sweepAcks = new Map();
@@ -1713,8 +1714,21 @@ class LibP2PExchange {
   handleQueuePresence(data) {
     const { address, timestamp } = data || {};
     if (!address) return;
+    
+    const addrLower = address.toLowerCase();
     const ts = typeof timestamp === 'number' ? timestamp : Date.now();
-    this.queuePresence.set(address.toLowerCase(), ts);
+    this.queuePresence.set(addrLower, ts);
+    
+    // If this is a new peer we haven't seen before, send an immediate heartbeat
+    if (!this.knownQueuePeers.has(addrLower) && addrLower !== this.ethereumAddress.toLowerCase()) {
+      this.knownQueuePeers.add(addrLower);
+      console.log(`[P2P] New peer detected: ${address.slice(0, 8)}, sending immediate heartbeat`);
+      
+      // Send heartbeat asynchronously without blocking
+      this.broadcastHeartbeat().catch(err => {
+        console.log(`[P2P] Immediate heartbeat failed for new peer ${address.slice(0, 8)}:`, err.message);
+      });
+    }
   }
 
   async startQueueDiscovery(ethereumAddress) {
