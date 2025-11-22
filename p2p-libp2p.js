@@ -2007,10 +2007,12 @@ class LibP2PExchange {
       const ackLenBuf = Buffer.allocUnsafe(4);
       ackLenBuf.writeUInt32BE(ackBuf.length, 0);
 
-      await pipe(
-        [ackLenBuf, ackBuf],
-        stream.sink
-      );
+      // Write via stream.sink without it-pipe to avoid pipeline type issues
+      const ackSource = (async function * () {
+        yield ackLenBuf;
+        yield ackBuf;
+      })();
+      await stream.sink(ackSource);
     } catch (err) {
       // Send error ACK
       try {
@@ -2018,7 +2020,11 @@ class LibP2PExchange {
         const ackBuf = Buffer.from(JSON.stringify(ack), 'utf8');
         const ackLenBuf = Buffer.allocUnsafe(4);
         ackLenBuf.writeUInt32BE(ackBuf.length, 0);
-        await pipe([ackLenBuf, ackBuf], stream.sink);
+        const errSource = (async function * () {
+          yield ackLenBuf;
+          yield ackBuf;
+        })();
+        await stream.sink(errSource);
       } catch (e) {
         // Failed to send error, stream likely closed
       }
@@ -2100,10 +2106,11 @@ class LibP2PExchange {
       const lenBuf = Buffer.allocUnsafe(4);
       lenBuf.writeUInt32BE(msgBuf.length, 0);
 
-      await pipe(
-        [lenBuf, msgBuf],
-        stream.sink
-      );
+      const msgSource = (async function * () {
+        yield lenBuf;
+        yield msgBuf;
+      })();
+      await stream.sink(msgSource);
 
       // Read ACK with timeout
       const ackTimeout = 5000;
@@ -2277,14 +2284,22 @@ class LibP2PExchange {
       const respBuf = Buffer.from(JSON.stringify(resp), 'utf8');
       const respLen = Buffer.allocUnsafe(4);
       respLen.writeUInt32BE(respBuf.length, 0);
-      await pipe([respLen, respBuf], stream.sink);
+      const respSource = (async function * () {
+        yield respLen;
+        yield respBuf;
+      })();
+      await stream.sink(respSource);
     } catch (err) {
       try {
         const resp = { status: 'error', reason: err.message || String(err) };
         const respBuf = Buffer.from(JSON.stringify(resp), 'utf8');
         const respLen = Buffer.allocUnsafe(4);
         respLen.writeUInt32BE(respBuf.length, 0);
-        await pipe([respLen, respBuf], stream.sink);
+        const errSource = (async function * () {
+          yield respLen;
+          yield respBuf;
+        })();
+        await stream.sink(errSource);
       } catch {}
       console.log('[P2P] Round0 handler error:', err.message || String(err));
     }
@@ -2309,7 +2324,11 @@ class LibP2PExchange {
     const reqBuf = Buffer.from(JSON.stringify(req), 'utf8');
     const lenBuf = Buffer.allocUnsafe(4);
     lenBuf.writeUInt32BE(reqBuf.length, 0);
-    await pipe([lenBuf, reqBuf], stream.sink);
+    const reqSource = (async function * () {
+      yield lenBuf;
+      yield reqBuf;
+    })();
+    await stream.sink(reqSource);
 
     const readResp = async () => {
       const chunks = [];
