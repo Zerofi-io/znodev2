@@ -336,12 +336,24 @@ class LibP2PExchange {
           await fsp.mkdir(dir, { recursive: true, mode: 0o700 });
         } catch (e) {
         }
-        
+
+        // Normalize discovered address to the cluster's P2P_PORT so we don't
+        // cache ephemeral source ports as bootstrap targets.
+        const clusterPort = Number(process.env.P2P_PORT || 0);
+        let normalizedAddr = addr;
+        if (clusterPort > 0) {
+          const m = addr.match(/^(.*\/tcp\/)(\d+)(.*)$/);
+          if (m) {
+            const [, prefix, , suffix] = m;
+            normalizedAddr = `${prefix}${clusterPort}${suffix}`;
+          }
+        }
+
         const data = this.loadPeerStore();
         const now = Date.now();
         const peers = Array.isArray(data.peers) ? data.peers : [];
-        const filtered = peers.filter(p => p.addr !== addr && p.peerId !== peerId);
-        filtered.unshift({ addr, peerId, lastSeen: now });
+        const filtered = peers.filter(p => p.peerId !== peerId && p.addr !== normalizedAddr);
+        filtered.unshift({ addr: normalizedAddr, peerId, lastSeen: now });
         const limited = filtered.slice(0, Number(process.env.P2P_MAX_PEERS || 32));
         const out = { peers: limited };
         
@@ -356,15 +368,22 @@ class LibP2PExchange {
 
   getBootstrapPeers() {
     const peers = [];
+    const envPeersSet = new Set();
 
+    // 1) Explicit bootstrap peers from env: always trusted as-is
     if (process.env.P2P_BOOTSTRAP_PEERS) {
-      peers.push(...process.env.P2P_BOOTSTRAP_PEERS
+      const envPeers = process.env.P2P_BOOTSTRAP_PEERS
         .split(',')
         .map(p => p.trim())
-        .filter(Boolean));
+        .filter(Boolean);
+
+      for (const p of envPeers) {
+        peers.push(p);
+        envPeersSet.add(p);
+      }
     }
 
-    // Load recent peers from local peer store (best-effort)
+    // 2) Discovered peers from local peer store (best-effort)
     try {
       if (fs.existsSync(this.peerStorePath)) {
         const raw = fs.readFileSync(this.peerStorePath, 'utf8');
@@ -381,11 +400,26 @@ class LibP2PExchange {
       console.log('[P2P] Warning: could not load peer store:', err.message);
     }
 
-    // Deduplicate while preserving order
+    const clusterPort = Number(process.env.P2P_PORT || 0);
+
+    // 3) Deduplicate while preserving order, normalizing discovered ports
     const seen = new Set();
     const unique = [];
-    for (const addr of peers) {
-      if (!addr) continue;
+
+    for (const raw of peers) {
+      if (!raw) continue;
+
+      let addr = raw;
+
+      // For discovered peers (not in env), rewrite TCP port to P2P_PORT
+      if (!envPeersSet.has(raw) && clusterPort > 0) {
+        const m = raw.match(/^(.*\/tcp\/)(\d+)(.*)$/);
+        if (m) {
+          const [, prefix, , suffix] = m;
+          addr = `${prefix}${clusterPort}${suffix}`;
+        }
+      }
+
       if (seen.has(addr)) continue;
       seen.add(addr);
       unique.push(addr);
