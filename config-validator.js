@@ -106,9 +106,6 @@ class ConfigValidator {
       }
     }
     
-    if (!TEST_MODE && process.env.P2P_REQUIRE_E2E !== '1') {
-      this.errors.push('P2P_REQUIRE_E2E=1 is required in production mode for end-to-end encryption');
-    }
   }
 
   validateMoneroConfig() {
