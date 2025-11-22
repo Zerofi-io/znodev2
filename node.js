@@ -1102,14 +1102,18 @@ class ZNode {
 
       if (!complete0) {
         console.log('❌ Round 0 incomplete after all retry attempts');
-        recordClusterFailure('round0_timeout');
+        if (isCoordinator) {
+          recordClusterFailure('round0_timeout');
+        }
         return false;
       }
 
       if (!Array.isArray(peers) || peers.length < expectedPeerCount) {
         const got = peers ? peers.length : 0;
         console.log('❌ Round 0: expected ' + expectedPeerCount + ' peer multisig infos, got ' + got);
-        recordClusterFailure('round0_peers_short');
+        if (isCoordinator) {
+          recordClusterFailure('round0_peers_short');
+        }
         return false;
       }
 

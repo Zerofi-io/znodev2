@@ -229,6 +229,10 @@ class LibP2PExchange {
 
     // Register direct identity exchange protocol
     await this.registerIdentityProtocol();
+    // Register Round 0 direct stream protocol
+    if (typeof this.registerRound0Protocol === 'function') {
+      await this.registerRound0Protocol();
+    }
     return;
   }
 
