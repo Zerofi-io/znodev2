@@ -416,11 +416,12 @@ class LibP2PExchange {
 
     // Wait for all other cluster members to subscribe
     const expectedPeers = membersLower.length - 1; // Exclude self
-    const maxWaitMs = Number(process.env.P2P_CLUSTER_WAIT_MS || 60000);
+    const maxWaitMs = Number(process.env.P2P_CLUSTER_WAIT_MS || 0); // 0 = infinite wait
     const startWait = Date.now();
     let peerCount = 0;
+    const noTimeout = maxWaitMs <= 0;
     
-    while (Date.now() - startWait < maxWaitMs) {
+    while (noTimeout || Date.now() - startWait < maxWaitMs) {
       const peers = this.node.services.pubsub.getSubscribers(topic);
       peerCount = peers.length;
       if (peerCount >= expectedPeers) {
@@ -433,7 +434,7 @@ class LibP2PExchange {
       await new Promise(r => setTimeout(r, 2000));
     }
     
-    if (peerCount < expectedPeers) {
+    if (!noTimeout && peerCount < expectedPeers) {
       console.log(`[P2P] Warning: Only ${peerCount}/${expectedPeers} peers connected after ${maxWaitMs}ms`);
     }
     
