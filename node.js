@@ -1023,20 +1023,58 @@ class ZNode {
         await this.prepareMultisig();
       }
 
-      // Round 0: exchange prepare_multisig payloads via P2P
-      console.log('\n→ Round 0: exchanging prepare_multisig info via P2P...');
-      await this.p2p.broadcastRoundData(clusterId, 0, this.multisigInfo);
-      const complete0 = await this.p2p.waitForRoundCompletion(clusterId, 0, members, roundTimeoutPrepare);
+      // Round 0: exchange prepare_multisig payloads via P2P (with retries)
+      const round0MaxAttemptsRaw = process.env.ROUND0_MAX_ATTEMPTS;
+      const round0MaxAttemptsParsed = round0MaxAttemptsRaw != null ? Number(round0MaxAttemptsRaw) : NaN;
+      const round0MaxAttempts = (Number.isFinite(round0MaxAttemptsParsed) && round0MaxAttemptsParsed > 0) ? round0MaxAttemptsParsed : 3;
+
+      const round0BackoffRaw = process.env.ROUND0_RETRY_BACKOFF_MS;
+      const round0BackoffParsed = round0BackoffRaw != null ? Number(round0BackoffRaw) : NaN;
+      const round0BackoffMs = (Number.isFinite(round0BackoffParsed) && round0BackoffParsed >= 0) ? round0BackoffParsed : 5000;
+
+      const expectedPeerCount = members.length - 1; // Exclude self
+      let peers = null;
+      let complete0 = false;
+
+      for (let attempt = 1; attempt <= round0MaxAttempts && !complete0; attempt++) {
+        try {
+          const r0Key = `${clusterId}_0`;
+          if (this.p2p.roundData && this.p2p.roundData.has(r0Key)) {
+            this.p2p.roundData.delete(r0Key);
+          }
+          if (this.p2p.myData && this.p2p.myData.has(r0Key)) {
+            this.p2p.myData.delete(r0Key);
+          }
+        } catch {}
+
+        console.log('\n→ Round 0: exchanging prepare_multisig info via P2P (attempt ' + attempt + '/' + round0MaxAttempts + ')...');
+        await this.p2p.broadcastRoundData(clusterId, 0, this.multisigInfo);
+        const ok = await this.p2p.waitForRoundCompletion(clusterId, 0, members, roundTimeoutPrepare);
+
+        peers = this.p2p.getPeerPayloads(clusterId, 0, members);
+        const peerCount = Array.isArray(peers) ? peers.length : 0;
+
+        if (ok && peerCount >= expectedPeerCount) {
+          complete0 = true;
+          break;
+        }
+
+        console.log('❌ Round 0 incomplete on attempt ' + attempt + ': got ' + peerCount + '/' + expectedPeerCount + ' peer multisig infos');
+        if (attempt < round0MaxAttempts && round0BackoffMs > 0) {
+          console.log('  → Retrying Round 0 after ' + round0BackoffMs + 'ms...');
+          await new Promise(resolve => setTimeout(resolve, round0BackoffMs));
+        }
+      }
+
       if (!complete0) {
-        console.log('❌ Round 0 incomplete - not all nodes submitted within timeout');
+        console.log('❌ Round 0 incomplete after all retry attempts');
         recordClusterFailure('round0_timeout');
         return false;
       }
 
-      const peers = this.p2p.getPeerPayloads(clusterId, 0, members);
-      const expectedPeerCount = members.length - 1; // Exclude self
       if (!Array.isArray(peers) || peers.length < expectedPeerCount) {
-        console.log(`❌ Round 0: expected ${expectedPeerCount} peer multisig infos, got ${peers.length}`);
+        const got = peers ? peers.length : 0;
+        console.log('❌ Round 0: expected ' + expectedPeerCount + ' peer multisig infos, got ' + got);
         recordClusterFailure('round0_peers_short');
         return false;
       }
