@@ -2094,11 +2094,25 @@ class ZNode {
 
         if (!isCoordinator) {
           try {
-            console.log('  → Pinging candidate cluster nodes for liveness (non-coordinator, fire-and-forget)...');
+            console.log('  → Pinging candidate cluster nodes for liveness (non-coordinator)...');
             await this.p2p.broadcastRoundData(clusterId, LIVENESS_ROUND, 'ping');
+
+            // Wait locally for full liveness before attempting cluster formation.
+            const ok = await this.p2p.waitForRoundCompletion(clusterId, LIVENESS_ROUND, members, livenessTimeout);
+            const liveKeyCheck = `${clusterId}_${LIVENESS_ROUND}`;
+            const collected = this.p2p.roundData.get(liveKeyCheck);
+            const liveCount = collected ? collected.size : 0;
+
+            if (!ok || liveCount < livenessQuorum) {
+              console.log(`  ❌ Liveness check failed on non-coordinator: ${liveCount}/${clusterSize} nodes responded (need ${livenessQuorum})`);
+              return;
+            }
+
+            console.log(`  ✓ Liveness check passed on non-coordinator (${liveCount}/${clusterSize} nodes)`);
           } catch (e) {
             const msg = e && e.message ? e.message : String(e);
             console.log('  ⚠️ Liveness ping error (non-coordinator):', msg);
+            return;
           }
         } else {
           let attempt = 0;
