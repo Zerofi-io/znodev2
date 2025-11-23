@@ -1969,7 +1969,7 @@ class LibP2PExchange {
       let messageLength = 0;
       let bytesReceived = 0;
 
-      for await (const chunk of stream.source) {
+      for await (const chunk of stream) {
         if (!lenBuf) {
           // First 4 bytes are the length prefix
           if (chunk.length < 4) {
@@ -2007,12 +2007,10 @@ class LibP2PExchange {
       const ackLenBuf = Buffer.allocUnsafe(4);
       ackLenBuf.writeUInt32BE(ackBuf.length, 0);
 
-      // Write via stream.sink without it-pipe to avoid pipeline type issues
-      const ackSource = (async function * () {
-        yield ackLenBuf;
-        yield ackBuf;
-      })();
-      await stream.sink(ackSource);
+      // Send ACK using MessageStream API
+      stream.send(ackLenBuf);
+      stream.send(ackBuf);
+      await stream.close();
     } catch (err) {
       // Send error ACK
       try {
@@ -2020,11 +2018,9 @@ class LibP2PExchange {
         const ackBuf = Buffer.from(JSON.stringify(ack), 'utf8');
         const ackLenBuf = Buffer.allocUnsafe(4);
         ackLenBuf.writeUInt32BE(ackBuf.length, 0);
-        const errSource = (async function * () {
-          yield ackLenBuf;
-          yield ackBuf;
-        })();
-        await stream.sink(errSource);
+        stream.send(ackLenBuf);
+        stream.send(ackBuf);
+        await stream.close();
       } catch (e) {
         // Failed to send error, stream likely closed
       }
@@ -2099,18 +2095,15 @@ class LibP2PExchange {
         signature
       };
 
-      // Open stream and send
+      // Open stream and send using MessageStream API
       const stream = await this.node.dialProtocol(targetPeerId, '/znode/identity/1.0.0');
       
       const msgBuf = Buffer.from(JSON.stringify(message), 'utf8');
       const lenBuf = Buffer.allocUnsafe(4);
       lenBuf.writeUInt32BE(msgBuf.length, 0);
 
-      const msgSource = (async function * () {
-        yield lenBuf;
-        yield msgBuf;
-      })();
-      await stream.sink(msgSource);
+      stream.send(lenBuf);
+      stream.send(msgBuf);
 
       // Read ACK with timeout
       const ackTimeout = 5000;
@@ -2124,7 +2117,7 @@ class LibP2PExchange {
         let ackLength = 0;
         let bytesReceived = 0;
 
-        for await (const chunk of stream.source) {
+        for await (const chunk of stream) {
           if (!lenBuf) {
             if (chunk.length < 4) {
               throw new Error('Invalid ACK: first chunk too small');
@@ -2237,7 +2230,7 @@ class LibP2PExchange {
       let messageLength = 0;
       let bytesReceived = 0;
 
-      for await (const chunk of stream.source) {
+      for await (const chunk of stream) {
         if (!lenBuf) {
           if (chunk.length < 4) {
             throw new Error('Invalid Round0 stream: first chunk too small');
@@ -2284,22 +2277,18 @@ class LibP2PExchange {
       const respBuf = Buffer.from(JSON.stringify(resp), 'utf8');
       const respLen = Buffer.allocUnsafe(4);
       respLen.writeUInt32BE(respBuf.length, 0);
-      const respSource = (async function * () {
-        yield respLen;
-        yield respBuf;
-      })();
-      await stream.sink(respSource);
+      stream.send(respLen);
+      stream.send(respBuf);
+      await stream.close();
     } catch (err) {
       try {
         const resp = { status: 'error', reason: err.message || String(err) };
         const respBuf = Buffer.from(JSON.stringify(resp), 'utf8');
         const respLen = Buffer.allocUnsafe(4);
         respLen.writeUInt32BE(respBuf.length, 0);
-        const errSource = (async function * () {
-          yield respLen;
-          yield respBuf;
-        })();
-        await stream.sink(errSource);
+        stream.send(respLen);
+        stream.send(respBuf);
+        await stream.close();
       } catch {}
       console.log('[P2P] Round0 handler error:', err.message || String(err));
     }
@@ -2324,11 +2313,11 @@ class LibP2PExchange {
     const reqBuf = Buffer.from(JSON.stringify(req), 'utf8');
     const lenBuf = Buffer.allocUnsafe(4);
     lenBuf.writeUInt32BE(reqBuf.length, 0);
-    const reqSource = (async function * () {
-      yield lenBuf;
-      yield reqBuf;
-    })();
-    await stream.sink(reqSource);
+    const reqSourceLen = lenBuf;
+
+    // Send length-prefixed request using MessageStream API
+    stream.send(reqSourceLen);
+    stream.send(reqBuf);
 
     const readResp = async () => {
       const chunks = [];
@@ -2336,7 +2325,7 @@ class LibP2PExchange {
       let respLength = 0;
       let bytesReceived = 0;
 
-      for await (const chunk of stream.source) {
+      for await (const chunk of stream) {
         if (!lenBuf) {
           if (chunk.length < 4) {
             throw new Error('Invalid Round0 resp: first chunk too small');
